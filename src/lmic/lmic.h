@@ -291,7 +291,7 @@ enum _ev_t { EV_SCAN_TIMEOUT=1, EV_BEACON_FOUND,
              EV_TXSTART, EV_TXCANCELED, EV_RXSTART, EV_JOIN_TXCOMPLETE };
 typedef enum _ev_t ev_t;
 
-/// \brief Macro to initalize a normal table of event strings
+/// \brief Macro to initialize a normal table of event strings
 #define LMIC_EVENT_NAME_TABLE__INIT                                         \
     "<<zero>>",                                                             \
     "EV_SCAN_TIMEOUT", "EV_BEACON_FOUND",                                   \
