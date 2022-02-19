@@ -18,6 +18,7 @@
 	- [`os_radio(RADIO_TX)`](#os_radioradio_tx)
 	- [`os_radio(RADIO_RX)`](#os_radioradio_rx)
 	- [`os_radio(RADIO_RXON)`](#os_radioradio_rxon)
+	- [`os_radio(RADIO_TX_AT)`](#os_radioradio_tx_at)
 - [Common parameters](#common-parameters)
 	- [`LMIC.rps` (IN)](#lmicrps-in)
 	- [`LMIC.freq` (IN)](#lmicfreq-in)
@@ -27,7 +28,7 @@
 	- [`LMIC.radio_txpow` (IN)](#lmicradio_txpow-in)
 	- [`LMIC.frame[]` (IN)](#lmicframe-in)
 	- [`LMIC.datalen` (IN)](#lmicdatalen-in)
-	- [`LMIC.txend` (OUT)](#lmictxend-out)
+	- [`LMIC.txend` (IN, OUT)](#lmictxend-in-out)
 - [Receive parameters](#receive-parameters)
 	- [`LMIC.frame[]` (OUT)](#lmicframe-out)
 	- [`LMIC.datalen` (OUT)](#lmicdatalen-out)
@@ -61,7 +62,7 @@ When the operation completes, `LMIC.osjob` is scheduled.
 
 ### `os_radio(RADIO_RX)`
 
-A single frame is received ad the specified time, and the radio is put back to sleep if no frame is found.
+A single frame is received at the specified time, and the radio is put back to sleep if no frame is found.
 
 When the operation completes, `LMIC.osjob` is scheduled.
 

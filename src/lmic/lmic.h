@@ -270,16 +270,17 @@ enum { OP_NONE     = 0x0000,
        OP_LINKDEAD = 0x1000, //!< link was reported as dead
        OP_TESTMODE = 0x2000, //!< developer test mode
        OP_UNJOIN   = 0x4000, //!< unjoin and rejoin on next engineUpdate().
+       OP_CLASSC   = 0x8000, //!< class C mode is enabled.
 };
 // TX-RX transaction flags - report back to user
-enum { TXRX_ACK    = 0x80,   //<! confirmed UP frame was acked
-       TXRX_NACK   = 0x40,   //<! confirmed UP frame was not acked
-       TXRX_NOPORT = 0x20,   //<! set if a frame with a port was RXed, clr if no frame/no port
-       TXRX_PORT   = 0x10,   //<! set if a frame with a port was RXed, LMIC.frame[LMIC.dataBeg-1] => port
-       TXRX_LENERR = 0x08,   //<! set if frame was discarded due to length error.
-       TXRX_PING   = 0x04,   //<! received in a scheduled RX slot
-       TXRX_DNW2   = 0x02,   //<! received in 2dn DN slot
-       TXRX_DNW1   = 0x01,   //<! received in 1st DN slot
+enum { TXRX_ACK    = 0x80,   //!< confirmed UP frame was acked
+       TXRX_NACK   = 0x40,   //!< confirmed UP frame was not acked
+       TXRX_NOPORT = 0x20,   //!< set if a frame with a port was RXed, clr if no frame/no port
+       TXRX_PORT   = 0x10,   //!< set if a frame with a port was RXed, LMIC.frame[LMIC.dataBeg-1] => port
+       TXRX_LENERR = 0x08,   //!< set if frame was discarded due to length error.
+       TXRX_PING   = 0x04,   //!< received in a scheduled RX slot
+       TXRX_DNW2   = 0x02,   //!< received in 2dn DN slot
+       TXRX_DNW1   = 0x01,   //!< received in 1st DN slot
 };
 
 /// \brief Event codes for event callback
@@ -504,6 +505,22 @@ struct lmic_radio_data_s {
     unsigned    txlate_count;
 };
 
+typedef union lmic_class_c_flags_u lmic_class_c_flags_t;
+union lmic_class_c_flags_u {
+    unsigned    mask;   ///< view all the flags as a word so we can reset them easily.
+    struct {
+        unsigned    fEnabled: 1;    ///< true if class C operation is enabled.
+        unsigned    fRx2Active: 1;  ///< true if we think that RX2 is active.
+    } f;
+};
+
+/// \brief the structure containing class C state
+typedef struct lmic_class_c_s lmic_class_c_t;
+
+struct lmic_class_c_s {
+    lmic_class_c_flags_t    flags;  ///< the state flags
+};
+
 /*
 
 Structure:  lmic_t
@@ -687,6 +704,11 @@ struct lmic_t {
 
     u1_t        noRXIQinversion;
     u1_t        saveIrqFlags;   // last LoRa IRQ flags
+
+    // Class C state
+#if LMIC_ENABLE_class_c
+    lmic_class_c_t  classC;     ///< the state for class C.
+#endif
 };
 
 //! \var struct lmic_t LMIC
@@ -771,6 +793,24 @@ enum lmic_compliance_rx_action_e {
 };
 
 lmic_compliance_rx_action_t LMIC_complianceRxMessage(u1_t port, const u1_t *pMessage, size_t nMessage);
+
+// APIs for class C support
+// We provide stubs so that users don't need to litter their code with #if unless
+// they want to.
+
+#if LMIC_ENABLE_class_c
+///! \brief turn class C operation off or on. By default, it's off.
+bit_t LMIC_enableClassC(bit_t fOnIfTrue);
+#else
+static inline bit_t LMIC_enableClassC(bit_t fOnIfTrue) {
+    if (fOnIfTrue)
+        // class C cannot be turned on in this build;
+        return 0;
+    else
+        // class C cannot be turned on, but the request says "turn it off"
+        return 1;
+}
+#endif // !LMIC_ENABLE_class_c
 
 // Declare onEvent() function, to make sure any definition will have the
 // C conventions, even when in a C++ file.
