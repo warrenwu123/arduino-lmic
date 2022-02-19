@@ -886,7 +886,7 @@ scan_mac_cmds(
                 LMIC.dn2Ans |= MCMD_RXParamSetupAns_RX2DataRateACK;
             if( freq != 0 )
                 LMIC.dn2Ans |= MCMD_RXParamSetupAns_ChannelACK;
-            if (rx1DrOffset <= 3)
+            if ( rx1DrOffset <= LMICbandplan_queryMaxRx1DrOffset() )
                 LMIC.dn2Ans |= MCMD_RXParamSetupAns_RX1DrOffsetAck;
 
             if( LMIC.dn2Ans == (0xC0|MCMD_RXParamSetupAns_RX2DataRateACK|MCMD_RXParamSetupAns_ChannelACK| MCMD_RXParamSetupAns_RX1DrOffsetAck) ) {
