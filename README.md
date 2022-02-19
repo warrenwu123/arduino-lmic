@@ -1247,6 +1247,8 @@ function uflt12f(rawUflt12)
 - HEAD has the following changes.
 
   - Enable device time request by default in config file ([#840](https://github.com/mcci-catena/arduino-lmic/issues/840)).
+  - Refactor the LMIC to enable secure element support ([#578](https://github.com/mcci-catena/arduino-lmic/issues/840)).
+  - Start resurrecting Doxygen support.
 
 - v4.1.1 is a patch release.
 
