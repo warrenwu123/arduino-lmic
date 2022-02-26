@@ -1248,8 +1248,10 @@ function uflt12f(rawUflt12)
 
   - Enable device time request by default in config file ([#840](https://github.com/mcci-catena/arduino-lmic/issues/840)).
   - Correct bug in MAC Rx1DrOffset error checking for regions other than US ([#841](https://github.com/mcci-catena/arduino-lmic/issues/840)). Thanks to @GitTibbe for finding this.
-  - Refactor the LMIC to enable secure element support ([#578](https://github.com/mcci-catena/arduino-lmic/issues/840)).
+  - Refactor the LMIC to enable secure element support ([#578](https://github.com/mcci-catena/arduino-lmic/issues/578)).
+  - Add Class C support ([#323](https://github.com/mcci-catena/arduino-lmic/issues/323)).
   - Start resurrecting Doxygen support.
+  - Version is V4.2.0-pre1
 
 - v4.1.1 is a patch release.
 
