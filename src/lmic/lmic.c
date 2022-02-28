@@ -32,6 +32,7 @@
 #define LMIC_DR_LEGACY 0
 #include "lmic_bandplan.h"
 
+#include "lmic_implementation.h"
 #include "../se/i/lmic_secure_element_api.h"
 
 #if defined(DISABLE_BEACONS) && !defined(DISABLE_PING)
@@ -47,6 +48,7 @@ static void engineUpdate(void);
 static bit_t processJoinAccept_badframe(void);
 static bit_t processJoinAccept_nojoinframe(void);
 
+static osjobcbfn_t processRxCDnData;
 
 #if !defined(DISABLE_BEACONS)
 static void startScan (void);
@@ -365,7 +367,6 @@ static bit_t setDrTxpow (u1_t reason, u1_t dr, s1_t pow) {
     return result;
 }
 
-
 #if !defined(DISABLE_PING)
 void LMIC_stopPingable (void) {
     LMIC.opmode &= ~(OP_PINGABLE|OP_PINGINI);
@@ -425,13 +426,13 @@ static void reportEventNoUpdate (ev_t ev) {
 
         // correct assumption if a port was provided.
         if (LMIC.txrxFlags & TXRX_PORT)
-            port = LMIC.frame[LMIC.dataBeg - 1];
+            port = LMIC.radio.pFrame[LMIC.dataBeg - 1];
 
         // notify the user.
         LMIC.client.rxMessageCb(
                 LMIC.client.rxMessageUserData,
                 port,
-                LMIC.frame + LMIC.dataBeg,
+                LMIC.radio.pFrame + LMIC.dataBeg,
                 LMIC.dataLen
                 );
     }
@@ -557,7 +558,7 @@ static lmic_beacon_error_t decodeBeacon (void) {
     if (LMIC.dataLen != LEN_BCN) { // implicit header RX guarantees this
         return LMIC_BEACON_ERROR_INVALID;
     }
-    xref2u1_t d = LMIC.frame;
+    xref2u1_t d = LMIC.radio.pFrame;
     if(! LMICbandplan_isValidBeacon1(d))
         return LMIC_BEACON_ERROR_INVALID;   // first (common) part fails CRC check
     // First set of fields is ok
@@ -1056,8 +1057,10 @@ scan_mac_cmds(
 
 #if LMIC_ENABLE_DeviceTimeReq
         case MCMD_DeviceTimeAns: {
-            // don't process a spurious downlink.
-            if ( LMIC.txDeviceTimeReqState == lmic_RequestTimeState_rx ) {
+            // don't process a spurious downlink. And the spec says that
+            // the DeviceTimeAns must only be sent during a Class A downlink.
+            if ( LMIC_txrxFlags_isClassA(LMIC.txrxFlags) &&
+                 LMIC.txDeviceTimeReqState == lmic_RequestTimeState_rx ) {
                 // remember that it's time to notify the client.
                 LMIC.txDeviceTimeReqState = lmic_RequestTimeState_success;
 
@@ -1112,7 +1115,7 @@ static void setAdrAckCount (s2_t count) {
 }
 
 static bit_t decodeFrame (void) {
-    xref2u1_t d = LMIC.frame;
+    xref2u1_t d = LMIC.radio.pFrame;
     u1_t hdr    = d[0];
     u1_t ftype  = hdr & HDR_FTYPE;
     int  dlen   = LMIC.dataLen;
@@ -1255,17 +1258,18 @@ static bit_t decodeFrame (void) {
     // We heard from network
     LMIC.adrChanged = LMIC.rejoinCnt = 0;
     setAdrAckCount(LINK_CHECK_INIT);
-#if !defined(DISABLE_MCMD_RXParamSetupReq)
     // We heard from network "on a Class A downlink"
-    LMIC.dn2Ans = 0;
+    if (LMIC_txrxFlags_isClassA(LMIC.txrxFlags)) {
+#if !defined(DISABLE_MCMD_RXParamSetupReq)
+        LMIC.dn2Ans = 0;
 #endif // !defined(DISABLE_MCMD_RXParamSetupReq)
 #if !defined(DISABLE_MCMD_RXTimingSetupReq)
-    // We heard from network "on a Class A downlink"
-    LMIC.macRxTimingSetupAns = 0;
+        LMIC.macRxTimingSetupAns = 0;
 #endif // !defined(DISABLE_MCMD_RXParamSetupReq)
 #if !defined(DISABLE_MCMD_DlChannelReq) && CFG_LMIC_EU_like
-    LMIC.macDlChannelAns = 0;
+        LMIC.macDlChannelAns = 0;
 #endif
+    }
 
     int m = LMIC.rssi - RSSI_OFF - getSensitivity(LMIC.rps);
     // for legacy reasons, LMIC.margin is set to the unsigned sensitivity. It can never be negative.
@@ -1383,6 +1387,27 @@ static void setupRx2 (void) {
     radioRx();
 }
 
+// start Class C window
+static void setupRxClassC (void) {
+#if LMIC_ENABLE_class_c
+    if (LMIC.classC.flags.f.fEnabled) {
+        initTxrxFlags(__func__, LMIC_txrxFlags_setClassC(0));
+        LMIC.radio.freq = LMIC.dn2Freq;
+        LMIC.radio.pFrame = LMIC.classC.frame;
+        LMIC.radio.rxtime = os_getTime();
+        LMIC.radio.rps = dndr2rps(LMIC.dn2Dr);
+        LMIC.radio.rxsyms = 0;
+        LMIC.radio.dataLen = 0;
+        LMIC.radio.flags = 0;
+        if (LMIC.noRXIQinversion) {
+            LMIC.radio.flags |= LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION;
+        }
+        LMIC.classC.job.func = processRxCDnData;
+        os_radio_v2(RADIO_RXON_C, &LMIC.classC.job);
+    }
+#endif // LMIC_ENABLE_class_c
+}
+
 //! \brief Adjust the delay (in ticks) of the target window-open time from nominal.
 //! \param hsym the duration of one-half symbol in osticks.
 //! \param rxsyms_in the nominal window length -- minimum length of time to delay.
@@ -1462,10 +1487,10 @@ static void schedRx12 (ostime_t delay, osjobcb_t func, u1_t dr) {
     // time things accurately.
     //
     // This also sets LMIC.rxsyms. This is NOT normally used for FSK; see LMICbandplan_txDoneFSK()
-    LMIC.rxtime = LMIC.txend + LMICcore_adjustForDrift(delay, hsym, LMICbandplan_MINRX_SYMS_LoRa_ClassA);
+    LMIC.nextRxTime = LMIC.txend + LMICcore_adjustForDrift(delay, hsym, LMICbandplan_MINRX_SYMS_LoRa_ClassA);
 
-    LMIC_X_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": sched Rx12 %"LMIC_PRId_ostime_t"\n", os_getTime(), LMIC.rxtime - os_getRadioRxRampup());
-    os_setTimedCallback(&LMIC.osjob, LMIC.rxtime - os_getRadioRxRampup(), func);
+    LMIC_X_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": sched Rx12 %"LMIC_PRId_ostime_t"\n", os_getTime(), LMIC.nextRxTime - os_getRadioRxRampup());
+    os_setTimedCallback(&LMIC.osjob, LMIC.nextRxTime - os_getRadioRxRampup(), func);
 }
 
 static void setupRx1 (osjobcb_t func) {
@@ -1478,7 +1503,7 @@ static void setupRx1 (osjobcb_t func) {
 }
 
 
-// Called by HAL once TX complete and delivers exact end of TX time stamp in LMIC.rxtime
+// Called by HAL once TX complete and delivers exact end of TX time stamp in LMIC.txend
 static void txDone (ostime_t delay, osjobcb_t func) {
 #if !defined(DISABLE_PING)
     if( (LMIC.opmode & (OP_TRACK|OP_PINGABLE|OP_PINGINI)) == (OP_TRACK|OP_PINGABLE) ) {
@@ -1550,7 +1575,7 @@ static bit_t processJoinAccept (void) {
     }
 
     LMIC_SecureElement_Error_t seErr;
-    
+
     seErr = LMIC_SecureElement_Default_decodeJoinAccept(
         LMIC.frame, dlen,
         LMIC.frame,
@@ -1663,9 +1688,17 @@ static bit_t processJoinAccept_nojoinframe(void) {
         return 1;
 }
 
+static void radioGetRxResults(void) {
+    if (LMIC.radio.state & LMIC_RADIO_EV_RXDONE) {
+        LMIC.dataLen = LMIC.radio.dataLen;
+        LMIC.rxtime = LMIC.radio.rxtime;
+    }
+}
+
 static void processRx2Jacc (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
+    radioGetRxResults();
     if( LMIC.dataLen == 0 ) {
         initTxrxFlags(__func__, 0);  // nothing in 1st/2nd DN slot
     }
@@ -1682,9 +1715,10 @@ static void setupRx2Jacc (xref2osjob_t osjob) {
     setupRx2();
 }
 
-
 static void processRx1Jacc (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
+
+    radioGetRxResults();
 
     if( LMIC.dataLen == 0 || !processJoinAccept() )
         schedRx12(DELAY_JACC2_osticks, FUNC_ADDR(setupRx2Jacc), LMIC.dn2Dr);
@@ -1714,11 +1748,13 @@ static bit_t processDnData(void);
 static void processRx2DnData (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
+    radioGetRxResults();
+
     if( LMIC.dataLen == 0 ) {
         initTxrxFlags(__func__, 0);  // nothing in 1st/2nd DN slot
         // It could be that the gateway *is* sending a reply, but we
         // just didn't pick it up. To avoid TX'ing again while the
-        // gateay is not listening anyway, delay the next transmission
+        // gateway is not listening anyway, delay the next transmission
         // until DNW2_SAFETY_ZONE from now, and add up to 2 seconds of
         // extra randomization.
         // BUG(tmm@mcci.com) this delay is not needed for some
@@ -1741,10 +1777,19 @@ static void setupRx2DnData (xref2osjob_t osjob) {
 static void processRx1DnData (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
-    if( LMIC.dataLen == 0 || !processDnData() )
+    radioGetRxResults();
+    if( LMIC.dataLen == 0 || !processDnData() ) {
         schedRx12(sec2osticks(LMIC.rxDelay +(int)DELAY_EXTDNW2), FUNC_ADDR(setupRx2DnData), LMIC.dn2Dr);
+    }
+    setupRxClassC();
 }
 
+static void processRxCDnData (xref2osjob_t osjob) {
+    LMIC_API_PARAMETER(osjob);
+
+    radioGetRxResults();
+    processDnData();
+}
 
 static void setupRx1DnData (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
@@ -1757,6 +1802,7 @@ static void updataDone (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
     txDone(sec2osticks(LMIC.rxDelay), FUNC_ADDR(setupRx1DnData));
+    setupRxClassC();
 }
 
 // ========================================
@@ -1873,6 +1919,7 @@ static bit_t buildDataFrame (void) {
     LMIC.frame[OFF_DAT_HDR] = HDR_FTYPE_DAUP | HDR_MAJOR_V1;
     LMIC.frame[OFF_DAT_FCT] = (LMIC.dnConf | LMIC.adrEnabled
                               | (sendAdrAckReq() ? FCT_ADRACKReq : 0)
+                              | (LMICJ_isActiveClassB() ? FCT_CLASSB : 0)
                               | (end-OFF_DAT_OPTS));
     os_wlsbf4(LMIC.frame+OFF_DAT_ADDR,  LMIC.devaddr);
 
@@ -1938,6 +1985,8 @@ static void onBcnRx (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
     // If we arrive via job timer make sure to put radio to rest.
+    radioGetRxResults();
+
     os_radio(RADIO_RST);
     os_clearCallback(&LMIC.osjob);
     if( LMIC.dataLen == 0 ) {
@@ -1978,8 +2027,8 @@ static void startScan (void) {
     LMIC.txCnt = LMIC.dnConf = LMIC.bcninfo.flags = 0;
     LMIC.opmode = (LMIC.opmode | OP_SCAN) & ~(OP_TXRXPEND);
     LMICbandplan_setBcnRxParams();
-    LMIC.rxtime = LMIC.bcninfo.txtime = os_getTime() + sec2osticks(BCN_INTV_sec+1);
-    os_setTimedCallback(&LMIC.osjob, LMIC.rxtime, FUNC_ADDR(onBcnRx));
+    LMIC.nextRxTime = LMIC.bcninfo.txtime = os_getTime() + sec2osticks(BCN_INTV_sec+1);
+    os_setTimedCallback(&LMIC.osjob, LMIC.nextRxTime, FUNC_ADDR(onBcnRx));
     os_radio(RADIO_RXON);
 }
 
@@ -1996,6 +2045,8 @@ bit_t LMIC_enableTracking (u1_t tryBcnInfo) {
 
 
 void LMIC_disableTracking (void) {
+    if (LMIC.opmode & OP_SCAN)
+        os_clearCallback(&LMIC.osjob);
     LMIC.opmode &= ~(OP_SCAN|OP_TRACK);
     LMIC.bcninfoTries = 0;
     engineUpdate();
@@ -2117,6 +2168,7 @@ void LMIC_unjoinAndRejoin(void) {
 static void processPingRx (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
+    radioGetRxResults();
     if( LMIC.dataLen != 0 ) {
         initTxrxFlags(__func__, TXRX_PING);
         if( decodeFrame() ) {
@@ -2128,27 +2180,31 @@ static void processPingRx (xref2osjob_t osjob) {
 }
 #endif // !DISABLE_PING
 
-// process downlink data at close of RX window.  Return zero if another RX window
-// should be scheduled, non-zero to prevent scheduling of RX2 (if relevant).
-// Confusingly, the caller actualyl does some of the calculation, so the answer from
-// us is not always totaly right; the rx1 window check ignores our result unless
-// LMIC.datalen was non zero before calling.
-//
-// Inputs:
-//  LMIC.dataLen    number of bytes receieved; 0 --> no message at all received.
-//  LMIC.txCnt      currnt confirmed uplink count, or 0 for unconfirmed.
-//  LMIC.txrxflags  state of play for the Class A engine and message receipt.
-//
-// and many other flags in txcomplete().
+///
+/// \brief process downlinks.
+///
+/// Process downlink data at close of RX window.  Return zero if another RX window
+/// should be scheduled, non-zero to prevent scheduling of RX2 (if relevant).
+/// Confusingly, the caller actually does some of the calculation, so the answer from
+/// us is not always totaly right; the rx1 window check ignores our result unless
+/// LMIC.datalen was non zero before calling.
+///
+/// Inputs:
+///  LMIC.dataLen    number of bytes receieved; 0 --> no message at all received.
+///  LMIC.txCnt      currnt confirmed uplink count, or 0 for unconfirmed.
+///  LMIC.txrxflags  state of play for the Class A engine and message receipt.
+///
+/// and many other flags in txcomplete().
+///
 
 // forward references.
 static bit_t processDnData_norx(void);
 static bit_t processDnData_txcomplete(void);
 
 static bit_t processDnData (void) {
-    // if no TXRXPEND, we shouldn't be here and can do nothign.
+    // if no TXRXPEND, we shouldn't be here and can do nothing.
     // formerly we asserted.
-    if ((LMIC.opmode & OP_TXRXPEND) == 0)
+    if ((LMIC.opmode & OP_TXRXPEND) == 0 && ! LMIC_txrxFlags_isClassC(LMIC.txrxFlags))
         return 1;
 
     if( LMIC.dataLen == 0 ) {
@@ -2159,7 +2215,7 @@ static bit_t processDnData (void) {
     }
     // if we get here, LMIC.dataLen != 0, so there is some
     // traffic.
-    else if( !decodeFrame() ) {
+    if( !decodeFrame() ) {
         // if we are in downlink window 1, we need to schedule
         // downlink window 2.
         if( (LMIC.txrxFlags & TXRX_DNW1) != 0 )
@@ -2170,7 +2226,9 @@ static bit_t processDnData (void) {
             // to close the books on this uplink attempt
             return processDnData_norx();
     }
-    // downlink frame was accepted. This means that we're done. Except
+
+    //
+    // Downlink frame was accepted. This means that we're done. Except
     // there's one bizarre corner case. If we sent a confirmed message
     // and got a downlink that didn't have an ACK, we have to retry.
     // It is not clear why the network is permitted to do this; the
@@ -2178,7 +2236,11 @@ static bit_t processDnData (void) {
     // windows is clear confirmation that the uplink made it to the
     // network and was valid. However, compliance checks this, so
     // we have to handle it and retransmit.
-    else if (LMIC.txCnt != 0 && (LMIC.txrxFlags & TXRX_NACK) != 0)
+    //
+    // With Class C, it's very possible that they didn't hear our
+    // uplink, so it's reasonable that we have to check this.
+    //
+    if (LMIC.txCnt != 0 && (LMIC.txrxFlags & TXRX_NACK) != 0)
         {
         // grr.  we're confirmed but the network downlink did not
         // set the ACK bit. We know txCnt is non-zero, so this
@@ -2186,6 +2248,7 @@ static bit_t processDnData (void) {
         // want to do this unless it's a confirmed uplink.
         return processDnData_norx();
         }
+
     // the transmit of the uplink is really complete.
     else {
         return processDnData_txcomplete();
@@ -2247,7 +2310,7 @@ static bit_t processDnData_txcomplete(void) {
     // turn off all the repeat stuff.
     LMIC.txCnt = LMIC.upRepeatCount = 0;
 
-    // if there's pending mac data that's not piggyback, launch it now.
+    // if there's pending mac data, launch it now.
     if (LMIC.pendMacLen != 0) {
         if (LMIC.pendMacPiggyback) {
             LMICOS_logEvent("piggyback mac message");
@@ -2363,6 +2426,8 @@ static bit_t processDnData_txcomplete(void) {
 static void processBeacon (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
+    radioGetRxResults();
+
     ostime_t lasttx = LMIC.bcninfo.txtime;   // save here - decodeBeacon might overwrite
     u1_t flags = LMIC.bcninfo.flags;
     ev_t ev;
@@ -2465,6 +2530,15 @@ static void engineUpdate_inner (void) {
         return;
     }
 #endif // !DISABLE_JOIN
+
+#if LMIC_ENABLE_class_c
+    if ( LMIC.classC.flags.f.fEnabled && ! LMICJ_isEnabledClassB()) {
+        // if no tx/rx scheduled, and we're joined, start a class C rx.
+        if (! LMICJ_isTxRequested() && LMIC.devaddr != 0) {
+            setupRxClassC();
+        }
+    }
+#endif
 
     ostime_t now    = os_getTime();
     ostime_t txbeg  = 0;
@@ -2569,7 +2643,7 @@ static void engineUpdate_inner (void) {
             LMIC.opmode = (LMIC.opmode & ~(OP_POLL|OP_RNDTX)) | OP_TXRXPEND | OP_NEXTCHNL;
             LMICbandplan_updateTx(txbeg);
             // limit power to value asked in adr
-            LMIC.radio_txpow = LMIC.txpow > LMIC.adrTxPow ? LMIC.adrTxPow : LMIC.txpow;
+            LMIC.radio.txpow = LMIC.txpow > LMIC.adrTxPow ? LMIC.adrTxPow : LMIC.txpow;
             reportEventNoUpdate(EV_TXSTART);
             os_radio(RADIO_TX);
             return;
@@ -2596,11 +2670,11 @@ static void engineUpdate_inner (void) {
             if( txbeg != 0  &&  (txbeg - LMIC.ping.rxtime) < 0 )
                 goto txdelay;
             LMIC.rxsyms  = LMIC.ping.rxsyms;
-            LMIC.rxtime  = LMIC.ping.rxtime;
+            LMIC.nextRxTime  = LMIC.ping.rxtime;
             LMIC.freq    = LMIC.ping.freq;
             LMIC.rps     = dndr2rps(LMIC.ping.dr);
             LMIC.dataLen = 0;
-            ostime_t rxtime_ping = LMIC.rxtime - os_getRadioRxRampup();
+            ostime_t rxtime_ping = LMIC.nextRxTime - os_getRadioRxRampup();
             // did we miss the time?
             if (now - rxtime_ping > 0) {
                 LMIC.opmode &= ~(OP_TRACK|OP_PINGABLE|OP_PINGINI|OP_REJOIN);
@@ -2619,7 +2693,7 @@ static void engineUpdate_inner (void) {
 
     LMICbandplan_setBcnRxParams();
     LMIC.rxsyms = LMIC.bcnRxsyms;
-    LMIC.rxtime = LMIC.bcnRxtime;
+    LMIC.nextRxTime = LMIC.bcnRxtime;
     if( now - rxtime >= 0 ) {
         LMIC.osjob.func = FUNC_ADDR(processBeacon);
 
@@ -2671,7 +2745,7 @@ void LMIC_setDrTxpow (dr_t dr, s1_t txpow) {
 
 void LMIC_shutdown (void) {
     os_clearCallback(&LMIC.osjob);
-    os_radio(RADIO_RST);
+    os_radio_v2(RADIO_RST, NULL);
     LMIC.opmode |= OP_SHUTDOWN;
 }
 
@@ -2809,16 +2883,12 @@ dr_t LMIC_feasibleDataRateForFrame(dr_t dr, u1_t payloadSize) {
     return dr;
 }
 
-static bit_t isTxPathBusy(void) {
-    return (LMIC.opmode & (OP_POLL | OP_TXDATA | OP_JOINING | OP_TXRXPEND)) != 0;
-}
-
 bit_t LMIC_queryTxReady (void) {
-    return ! isTxPathBusy();
+    return ! LMICJ_isTxPathBusy();
 }
 
 static bit_t adjustDrForFrameIfNotBusy(u1_t len) {
-    if (isTxPathBusy()) {
+    if (LMICJ_isTxPathBusy()) {
         return 0;
     }
     dr_t newDr = LMIC_feasibleDataRateForFrame(LMIC.datarate, len);
@@ -2834,7 +2904,7 @@ void LMIC_setTxData (void) {
 }
 
 void LMIC_setTxData_strict (void) {
-    if (isTxPathBusy()) {
+    if (LMICJ_isTxPathBusy()) {
         return;
     }
 
@@ -2856,7 +2926,7 @@ lmic_tx_error_t LMIC_setTxData2 (u1_t port, xref2u1_t data, u1_t dlen, u1_t conf
 
 // send a message w/o callback; do not adjust data rate
 lmic_tx_error_t LMIC_setTxData2_strict (u1_t port, xref2u1_t data, u1_t dlen, u1_t confirmed) {
-    if (isTxPathBusy()) {
+    if (LMICJ_isTxPathBusy()) {
         // already have a message queued
         return LMIC_ERROR_TX_BUSY;
     }
@@ -3084,10 +3154,112 @@ u1_t LMIC_setBatteryLevel(u1_t uBattLevel) {
 /// \brief get battery level that is to be returned by `DevStatusAns`.
 ///
 /// \returns
-///     This function returns the saved value of the battery level.
+///     This function returns the saved value of the battery level (as used for
+///     the DevStatusAns message).
 ///
 /// \see LMIC_setBatteryLevel()
 ///
 u1_t LMIC_getBatteryLevel(void) {
     return LMIC.client.devStatusAns_battery;
 }
+
+#if LMIC_ENABLE_class_c
+
+static osjobcbfn_t externalRequestCb;
+
+///
+/// \brief Turn class C operation off or on.
+///
+/// \param fOnIfTrue [in]   non-zero to enable Class C operation,
+///                         zero to disable Class C operation.
+///
+/// \details
+///     Because this function changes the state of the LMIC, and
+///     might be called from a callback, it synchronizes to the
+///     LMIC using an `osjob_t`, meaning that this function doesn't
+///     take effect immediately. It only fails if trying to turn on
+///     Class C but the LMIC is not
+///     configured for class C operation, or if the LMIC is currently
+///     running in Class B mode.
+///
+/// \returns
+///     This function non-zero for success, zero for failure.
+///
+bit_t LMIC_enableClassC(bit_t fOnIfTrue) {
+    // if LMIC is stopped, we must rail.
+    if (LMICJ_isShutdown())
+        return 0;
+
+    // if LMIC is already requesting this state, succeed.
+    if (LMIC.classC.requests.f.fStateChangeRq &&
+        LMIC.classC.requests.f.fTargetState == fOnIfTrue) {
+        LMICOS_logEventUint32("duplicate class C request", fOnIfTrue);
+        return 1;
+    }
+
+    // otherwise, queue an update.
+    LMIC.classC.requests.f.fStateChangeRq = 1;
+    LMIC.classC.requests.f.fTargetState = fOnIfTrue;
+
+    // if we've not already queued the callback, queue
+    // it now.
+    if (! LMIC.classC.requests.f.fPending) {
+        LMIC.classC.requests.f.fPending = 1;
+        os_setCallback(&LMIC.classC.job, externalRequestCb);
+    }
+
+    /// indicate success.
+    return 1;
+}
+
+///
+/// \brief process external requests
+///
+/// \param [in] pJob points to the  job structure that got us here.
+///
+/// \details
+///     \c externalRequestCb() is responsible for synchronously changing
+///     the state of the LMIC in response to an external request.
+///
+/// \returns
+///     This function has no explicit result.
+///
+static void externalRequestCb(osjob_t *pJob) {
+    bit_t fUpdateNeeded = 0;
+
+    // reset the job pending flag.
+    LMIC.classC.requests.f.fPending = 0;
+
+    // changing the class-C state?
+    if (LMIC.classC.requests.f.fStateChangeRq) {
+        const bit_t targetState = LMIC.classC.requests.f.fTargetState;
+        LMIC.classC.requests.f.fStateChangeRq = 0;
+
+        // we can always disable
+        if (targetState == LMIC.classC.flags.f.fEnabled) {
+            LMIC.classC.flags.f.fEnabled = 0;
+            LMICOS_logEventUint32("disable class C", LMIC.opmode);
+        }
+
+        // but if class B is enabled, or if we're shut down, we can't enable class C
+        else if (LMICJ_isEnabledClassB() || LMICJ_isShutdown()) {
+            // do nothing
+            LMICOS_logEventUint32("class B active, don't start class C", LMIC.opmode);
+        }
+
+        // otherwise, enable class C.
+        else {
+            LMIC.classC.flags.f.fEnabled = 1;
+            LMICOS_logEventUint32("enable class C", LMIC.opmode);
+            // if nothing is happening, we need to make it happen.
+            if (LMICJ_isFsmIdle()) {
+                fUpdateNeeded = 1;
+            }
+        }
+    }
+
+    // if an engine update is needed...
+    if (fUpdateNeeded)
+        engineUpdate();
+}
+#endif // LMIC_ENABLE_class_c

@@ -7,16 +7,16 @@ These are working notes for Class C implementation, not really permanent documen
 - [x] make this modular (so that we don't make tiny devices carry the extra code footprint)
 - [x] add code for enabling / disabling class C mode (I think maybe there's a required uplink to announce that you're in class C)
   - [x] define in header file
-  - [ ] write code - when class C is enabled, need to set a flag and re-evaluate the FSM; in other words, if someone turns on class C while the LMIC is busy, we need to synchronize things. Ditto, I think, for turning things off.
-- [ ] modify the radio driver to look for the class C flag on entry and stop reception without crashing.
-- [ ] add api for stopping an ongoing reception (for switching from RX2 to TX or RX1)
-- [ ] add code for processing class C downlinks
-- [ ] add api for starting a class C reception (rework the RX2 start-reception api from class A?)
-- [ ] add the code to the various states to start class C reception.
+  - [x] write code - when class C is enabled, need to set a flag and re-evaluate the FSM; in other words, if someone turns on class C while the LMIC is busy, we need to synchronize things. Ditto, I think, for turning things off.
+- [x] distinguish class C reception from Class A or Class B.
+- [x] change os_radio() to facilitate stopping ongoing Class C reception for Class A.
+- [x] add code for processing class C downlinks
+- [x] add API for starting a class C reception
+- [x] add the code to the various states to start class C reception.
 
 ## Decisions
 
-- Define "RX2 channel" to mean the channel, bandwidth and spreading factor used for class A RX2 downlinks, and for Class C downlinks.
+- Further parameterize radio driver so it gets most of its parameters via LMIC.radio.
 - We often will say "RX2 channel is open" to mean that the radio is (supposed to be) receiving on the RX2 channel.
 - Define "RX2 Window" to be the *time window* for a class A RX2 Window. The spec uses this also to mean "the RX2 channel is receiving" but we need to keep this straight.
 - `LMIC_ENABLE_class_c` if non-zero enables the class C code.

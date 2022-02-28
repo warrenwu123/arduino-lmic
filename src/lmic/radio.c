@@ -423,7 +423,7 @@ static void opmode (u1_t mode) {
 static void opmodeLora() {
     u1_t u = OPMODE_LORA;
 #ifdef CFG_sx1276_radio
-    if (LMIC.freq <= SX127X_FREQ_LF_MAX) {
+    if (LMIC.radio.freq <= SX127X_FREQ_LF_MAX) {
         u |= OPMODE_FSK_SX1276_LowFrequencyModeOn;
     }
 #endif
@@ -434,21 +434,72 @@ static void opmodeFSK() {
     u1_t u = OPMODE_FSK_SX127X_SETUP;
 
 #ifdef CFG_sx1276_radio
-    if (LMIC.freq <= SX127X_FREQ_LF_MAX) {
+    if (LMIC.radio.freq <= SX127X_FREQ_LF_MAX) {
         u |= OPMODE_FSK_SX1276_LowFrequencyModeOn;
     }
 #endif
     writeOpmode(u);
 }
 
+///
+/// \brief check whether state indicates that a transmit is pending
+///
+static inline bit_t os_radio_isTxActive(lmic_radio_state_t state) {
+    if ((state & (LMIC_RADIO_EV_TXSTART | LMIC_RADIO_EV_TXDONE)) == LMIC_RADIO_EV_TXSTART)
+        return 1;
+}
+
+///
+/// \brief check whether state indicates that a receive is pending
+///
+static inline bit_t os_radio_isRxActive(lmic_radio_state_t state) {
+    if ((state & (LMIC_RADIO_EV_RXSTART | LMIC_RADIO_EV_RXDONE)) == LMIC_RADIO_EV_RXSTART)
+        return 1;
+}
+
+///
+/// \brief check whether state indicates that the radio is active
+///
+static inline bit_t os_radio_isStateActive(lmic_radio_state_t state) {
+    return os_radio_isTxActive(state) || os_radio_isRxActive(state);
+}
+
+///
+/// \brief check whether noRxIqInversion is selected
+///
+static inline bit_t radioRq_getNoRxIqInversion() {
+    return (LMIC.radio.flags & LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION) != 0;
+}
+
+///
+/// \brief Complete a radio operation
+///
+/// \param event [in]   Event flags to be set in `LMIC.radio.state`, from
+///                     lmic_radio_state_e.
+///
+/// \details
+///     If there's a job to be scheduled, schedule it. Otherwise log that there's
+///     no job, and go on.
+///
+static void radio_complete (lmic_radio_state_t event) {
+    LMIC.radio.state |= event;
+    if (LMIC.radio.pRadioDoneJob != NULL) {
+        os_setCallback(LMIC.radio.pRadioDoneJob, LMIC.radio.pRadioDoneJob->func);
+        LMIC.radio.pRadioDoneJob = NULL;
+    }
+    else {
+        LMICOS_logEvent("null LMIC.radio.pRadioDoneJob");
+    }
+}
+
 // configure LoRa modem (cfg1, cfg2)
 static void configLoraModem () {
-    sf_t sf = getSf(LMIC.rps);
+    sf_t sf = getSf(LMIC.radio.rps);
 
 #ifdef CFG_sx1276_radio
         u1_t mc1 = 0, mc2 = 0, mc3 = 0;
 
-        bw_t const bw = getBw(LMIC.rps);
+        bw_t const bw = getBw(LMIC.radio.rps);
 
         switch (bw) {
         case BW125: mc1 |= SX1276_MC1_BW_125; break;
@@ -457,7 +508,7 @@ static void configLoraModem () {
         default:
             ASSERT(0);
         }
-        switch( getCr(LMIC.rps) ) {
+        switch( getCr(LMIC.radio.rps) ) {
         case CR_4_5: mc1 |= SX1276_MC1_CR_4_5; break;
         case CR_4_6: mc1 |= SX1276_MC1_CR_4_6; break;
         case CR_4_7: mc1 |= SX1276_MC1_CR_4_7; break;
@@ -466,15 +517,15 @@ static void configLoraModem () {
             ASSERT(0);
         }
 
-        if (getIh(LMIC.rps)) {
+        if (getIh(LMIC.radio.rps)) {
             mc1 |= SX1276_MC1_IMPLICIT_HEADER_MODE_ON;
-            writeReg(LORARegPayloadLength, getIh(LMIC.rps)); // required length
+            writeReg(LORARegPayloadLength, getIh(LMIC.radio.rps)); // required length
         }
         // set ModemConfig1
         writeReg(LORARegModemConfig1, mc1);
 
-        mc2 = (SX1272_MC2_SF7 + ((sf-1)<<4) + ((LMIC.rxsyms >> 8) & 0x3) );
-        if (getNocrc(LMIC.rps) == 0) {
+        mc2 = (SX1272_MC2_SF7 + ((sf-1)<<4) + ((LMIC.radio.rxsyms >> 8) & 0x3) );
+        if (getNocrc(LMIC.radio.rps) == 0) {
             mc2 |= SX1276_MC2_RX_PAYLOAD_CRCON;
         }
 #if CFG_TxContinuousMode
@@ -500,7 +551,7 @@ static void configLoraModem () {
         rHighBwOptimize2 = 0;
 
         if (bw == BW500) {
-            if (LMIC.freq > SX127X_FREQ_LF_MAX) {
+            if (LMIC.radio.freq > SX127X_FREQ_LF_MAX) {
                 rHighBwOptimize1 = 0x02;
                 rHighBwOptimize2 = 0x64;
             } else {
@@ -514,33 +565,33 @@ static void configLoraModem () {
             writeReg(LORARegHighBwOptimize2, rHighBwOptimize2);
 
 #elif CFG_sx1272_radio
-        u1_t mc1 = (getBw(LMIC.rps)<<6);
+        u1_t mc1 = (getBw(LMIC.radio.rps)<<6);
 
-        switch( getCr(LMIC.rps) ) {
+        switch( getCr(LMIC.radio.rps) ) {
         case CR_4_5: mc1 |= SX1272_MC1_CR_4_5; break;
         case CR_4_6: mc1 |= SX1272_MC1_CR_4_6; break;
         case CR_4_7: mc1 |= SX1272_MC1_CR_4_7; break;
         case CR_4_8: mc1 |= SX1272_MC1_CR_4_8; break;
         }
 
-        if ((sf == SF11 || sf == SF12) && getBw(LMIC.rps) == BW125) {
+        if ((sf == SF11 || sf == SF12) && getBw(LMIC.radio.rps) == BW125) {
             mc1 |= SX1272_MC1_LOW_DATA_RATE_OPTIMIZE;
         }
 
-        if (getNocrc(LMIC.rps) == 0) {
+        if (getNocrc(LMIC.radio.rps) == 0) {
             mc1 |= SX1272_MC1_RX_PAYLOAD_CRCON;
         }
 
-        if (getIh(LMIC.rps)) {
+        if (getIh(LMIC.radio.rps)) {
             mc1 |= SX1272_MC1_IMPLICIT_HEADER_MODE_ON;
-            writeReg(LORARegPayloadLength, getIh(LMIC.rps)); // required length
+            writeReg(LORARegPayloadLength, getIh(LMIC.radio.rps)); // required length
         }
         // set ModemConfig1
         writeReg(LORARegModemConfig1, mc1);
 
         // set ModemConfig2 (sf, AgcAutoOn=1 SymbTimeoutHi)
         u1_t mc2;
-        mc2 = (SX1272_MC2_SF7 + ((sf-1)<<4)) | 0x04 | ((LMIC.rxsyms >> 8) & 0x3);
+        mc2 = (SX1272_MC2_SF7 + ((sf-1)<<4)) | 0x04 | ((LMIC.radio.rxsyms >> 8) & 0x3);
 
 #if CFG_TxContinuousMode
         // Only for testing
@@ -557,7 +608,7 @@ static void configLoraModem () {
 
 static void configChannel () {
     // set frequency: FQ = (FRF * 32 Mhz) / (2 ^ 19)
-    uint64_t frf = ((uint64_t)LMIC.freq << 19) / 32000000;
+    uint64_t frf = ((uint64_t)LMIC.radio.freq << 19) / 32000000;
     writeReg(RegFrfMsb, (u1_t)(frf>>16));
     writeReg(RegFrfMid, (u1_t)(frf>> 8));
     writeReg(RegFrfLsb, (u1_t)(frf>> 0));
@@ -591,7 +642,7 @@ static void configChannel () {
 
 static void configPower () {
     // our input paramter -- might be different than LMIC.txpow!
-    s1_t const req_pw = (s1_t)LMIC.radio_txpow;
+    s1_t const req_pw = (s1_t)LMIC.radio.txpow;
     // the effective power
     s1_t eff_pw;
     // the policy; we're going to compute this.
@@ -623,7 +674,7 @@ static void configPower () {
         }
     }
 
-    policy = hal_getTxPowerPolicy(policy, eff_pw, LMIC.freq);
+    policy = hal_getTxPowerPolicy(policy, eff_pw, LMIC.radio.freq);
 
     switch (policy) {
     default:
@@ -649,7 +700,7 @@ static void configPower () {
     // (And, of course, it might also be too large.)
     case LMICHAL_radio_tx_power_policy_paboost:
         // It seems that SX127x doesn't like eff_pw 10 when in FSK mode.
-        if (getSf(LMIC.rps) == FSK && eff_pw < 11) {
+        if (getSf(LMIC.radio.rps) == FSK && eff_pw < 11) {
             eff_pw = 11;
         }
         rPaDac = SX127X_PADAC_POWER_NORMAL;
@@ -688,7 +739,7 @@ static void configPower () {
         }
     }
 
-    policy = hal_getTxPowerPolicy(policy, eff_pw, LMIC.freq);
+    policy = hal_getTxPowerPolicy(policy, eff_pw, LMIC.radio.freq);
 
     switch (policy) {
     default:
@@ -777,11 +828,11 @@ static void txfsk () {
 
     // initialize the payload size and address pointers
     // TODO(tmm@mcci.com): datasheet says this is not used in variable packet length mode
-    writeReg(FSKRegPayloadLength, LMIC.dataLen+1); // (insert length byte into payload))
+    writeReg(FSKRegPayloadLength, LMIC.radio.dataLen+1); // (insert length byte into payload))
 
     // download length byte and buffer to the radio FIFO
-    writeReg(RegFifo, LMIC.dataLen);
-    writeBuf(RegFifo, LMIC.frame, LMIC.dataLen);
+    writeReg(RegFifo, LMIC.radio.dataLen);
+    writeBuf(RegFifo, LMIC.radio.pFrame, LMIC.radio.dataLen);
 
     // enable antenna switch for TX
     hal_pin_rxtx(1);
@@ -794,7 +845,7 @@ static void txfsk () {
             ++LMIC.radio.txlate_count;
         }
     }
-    LMICOS_logEventUint32("+Tx FSK", LMIC.dataLen);
+    LMICOS_logEventUint32("+Tx FSK", LMIC.radio.dataLen);
     opmode(OPMODE_TX);
 }
 
@@ -830,10 +881,10 @@ static void txlora () {
     // initialize the payload size and address pointers
     writeReg(LORARegFifoTxBaseAddr, 0x00);
     writeReg(LORARegFifoAddrPtr, 0x00);
-    writeReg(LORARegPayloadLength, LMIC.dataLen);
+    writeReg(LORARegPayloadLength, LMIC.radio.dataLen);
 
     // download buffer to the radio FIFO
-    writeBuf(RegFifo, LMIC.frame, LMIC.dataLen);
+    writeBuf(RegFifo, LMIC.radio.pFrame, LMIC.radio.dataLen);
 
     // enable antenna switch for TX
     hal_pin_rxtx(1);
@@ -846,23 +897,23 @@ static void txlora () {
             ++LMIC.radio.txlate_count;
         }
     }
-    LMICOS_logEventUint32("+Tx LoRa", LMIC.dataLen);
+    LMICOS_logEventUint32("+Tx LoRa", LMIC.radio.dataLen);
     opmode(OPMODE_TX);
 
 #if LMIC_DEBUG_LEVEL > 0
-    u1_t sf = getSf(LMIC.rps) + 6; // 1 == SF7
-    u1_t bw = getBw(LMIC.rps);
-    u1_t cr = getCr(LMIC.rps);
+    u1_t sf = getSf(LMIC.radio.rps) + 6; // 1 == SF7
+    u1_t bw = getBw(LMIC.radio.rps);
+    u1_t cr = getCr(LMIC.radio.rps);
     LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": TXMODE, freq=%"PRIu32", len=%d, SF=%d, BW=%d, CR=4/%d, IH=%d\n",
-           os_getTime(), LMIC.freq, LMIC.dataLen, sf,
+           os_getTime(), LMIC.radio.freq, LMIC.radio.dataLen, sf,
            bw == BW125 ? 125 : (bw == BW250 ? 250 : 500),
            cr == CR_4_5 ? 5 : (cr == CR_4_6 ? 6 : (cr == CR_4_7 ? 7 : 8)),
-           getIh(LMIC.rps)
+           getIh(LMIC.radio.rps)
    );
 #endif
 }
 
-// start transmitter (buf=LMIC.frame, len=LMIC.dataLen)
+// start transmitter (buf=LMIC.radio.pFrame, len=LMIC.radio.dataLen)
 static void starttx () {
     u1_t const rOpMode = readReg(RegOpMode);
 
@@ -886,12 +937,12 @@ static void starttx () {
 
         if (rssi.max_rssi >= LMIC.lbt_dbmax) {
             // complete the request by scheduling the job
-            os_setCallback(&LMIC.osjob, LMIC.osjob.func);
+            radio_complete(LMIC_RADIO_EV_TXDONE | LMIC_RADIO_EV_TXDEFER);
             return;
         }
     }
 
-    if(getSf(LMIC.rps) == FSK) { // FSK modem
+    if(getSf(LMIC.radio.rps) == FSK) { // FSK modem
         txfsk();
     } else { // LoRa modem
         txlora();
@@ -920,7 +971,7 @@ static void rxlate (u4_t nLate) {
     }
 }
 
-// start LoRa receiver (time=LMIC.rxtime, timeout=LMIC.rxsyms, result=LMIC.frame[LMIC.dataLen])
+// start LoRa receiver (time=LMIC.radio.rxtime, timeout=LMIC.radio.rxsyms, result=LMIC.radio.pFrame[LMIC.radio.dataLen])
 static void rxlora (u1_t rxmode) {
     // select LoRa modem (from sleep mode)
     opmodeLora();
@@ -941,19 +992,16 @@ static void rxlora (u1_t rxmode) {
     writeReg(RegLna, LNA_RX_GAIN);
     // set max payload size
     writeReg(LORARegPayloadMaxLength, MAX_LEN_FRAME);
-#if !defined(DISABLE_INVERT_IQ_ON_RX) /* DEPRECATED(tmm@mcci.com); #250. remove test, always include code in V3 */
-    // use inverted I/Q signal (prevent mote-to-mote communication)
 
-    // XXX: use flag to switch on/off inversion
-    if (LMIC.noRXIQinversion) {
+    // use inverted I/Q signal (prevent mote-to-mote communication)
+    if (radioRq_getNoRxIqInversion()) {
         writeReg(LORARegInvertIQ, readReg(LORARegInvertIQ) & ~(1<<6));
     } else {
         writeReg(LORARegInvertIQ, readReg(LORARegInvertIQ)|(1<<6));
     }
-#endif
 
     // Errata 2.3 - receiver spurious reception of a LoRa signal
-    bw_t const bw = getBw(LMIC.rps);
+    bw_t const bw = getBw(LMIC.radio.rps);
     u1_t const rDetectOptimize = (readReg(LORARegDetectOptimize) & 0x78) | 0x03;
     if (bw < BW500) {
         writeReg(LORARegDetectOptimize, rDetectOptimize);
@@ -964,7 +1012,7 @@ static void rxlora (u1_t rxmode) {
     }
 
     // set symbol timeout (for single rx)
-    writeReg(LORARegSymbTimeoutLsb, (uint8_t) LMIC.rxsyms);
+    writeReg(LORARegSymbTimeoutLsb, (uint8_t) LMIC.radio.rxsyms);
     // set sync word
     writeReg(LORARegSyncWord, LORA_MAC_PREAMBLE);
 
@@ -983,13 +1031,13 @@ static void rxlora (u1_t rxmode) {
 
     // now instruct the radio to receive
     if (rxmode == RXMODE_SINGLE) { // single rx
-        u4_t nLate = hal_waitUntil(LMIC.rxtime); // busy wait until exact rx time
+        u4_t nLate = hal_waitUntil(LMIC.radio.rxtime); // busy wait until exact rx time
         opmode(OPMODE_RX_SINGLE);
         LMICOS_logEventUint32("+Rx LoRa Single", nLate);
         rxlate(nLate);
 #if LMIC_DEBUG_LEVEL > 0
         ostime_t now = os_getTime();
-        LMIC_DEBUG_PRINTF("start single rx: now-rxtime: %"LMIC_PRId_ostime_t"\n", now - LMIC.rxtime);
+        LMIC_DEBUG_PRINTF("start single rx: now-rxtime: %"LMIC_PRId_ostime_t"\n", now - LMIC.radio.rxtime);
 #endif
     } else { // continous rx (scan or rssi)
         LMICOS_logEventUint32("+Rx LoRa Continuous", rxmode);
@@ -1000,16 +1048,16 @@ static void rxlora (u1_t rxmode) {
     if (rxmode == RXMODE_RSSI) {
         LMIC_DEBUG_PRINTF("RXMODE_RSSI\n");
     } else {
-        u1_t sf = getSf(LMIC.rps) + 6; // 1 == SF7
-        u1_t bw = getBw(LMIC.rps);
-        u1_t cr = getCr(LMIC.rps);
+        u1_t sf = getSf(LMIC.radio.rps) + 6; // 1 == SF7
+        u1_t bw = getBw(LMIC.radio.rps);
+        u1_t cr = getCr(LMIC.radio.rps);
         LMIC_DEBUG_PRINTF("%"LMIC_PRId_ostime_t": %s, freq=%"PRIu32", SF=%d, BW=%d, CR=4/%d, IH=%d\n",
                os_getTime(),
                rxmode == RXMODE_SINGLE ? "RXMODE_SINGLE" : (rxmode == RXMODE_SCAN ? "RXMODE_SCAN" : "UNKNOWN_RX"),
-               LMIC.freq, sf,
+               LMIC.radio.freq, sf,
                bw == BW125 ? 125 : (bw == BW250 ? 250 : 500),
                cr == CR_4_5 ? 5 : (cr == CR_4_6 ? 6 : (cr == CR_4_7 ? 7 : 8)),
-               getIh(LMIC.rps)
+               getIh(LMIC.radio.rps)
        );
     }
 #endif
@@ -1017,11 +1065,11 @@ static void rxlora (u1_t rxmode) {
 
 static void rxfsk (u1_t rxmode) {
     // only single or continuous rx (no noise sampling)
-    if (rxmode == RXMODE_SCAN) {
+    if (rxmode == RXMODE_RSSI) {
         // indicate no bytes received.
-        LMIC.dataLen = 0;
+        LMIC.radio.dataLen = 0;
         // complete the request by scheduling the job.
-        os_setCallback(&LMIC.osjob, LMIC.osjob.func);
+        radio_complete(LMIC_RADIO_EV_RXDONE);
     }
 
     // select FSK modem (from sleep mode)
@@ -1043,7 +1091,7 @@ static void rxfsk (u1_t rxmode) {
     // set preamble detection
     writeReg(FSKRegPreambleDetect, 0xAA); // enable, 2 bytes, 10 chip errors
     // set preamble timeout
-    writeReg(FSKRegRxTimeout2, 0xFF);//(LMIC.rxsyms+1)/2);
+    writeReg(FSKRegRxTimeout2, 0xFF);//(LMIC.radio.rxsyms+1)/2);
     // set bitrate, autoclear CRC
     setupFskRxTx(1);
 
@@ -1055,7 +1103,7 @@ static void rxfsk (u1_t rxmode) {
 
     // now instruct the radio to receive
     if (rxmode == RXMODE_SINGLE) {
-        u4_t nLate = hal_waitUntil(LMIC.rxtime); // busy wait until exact rx time
+        u4_t nLate = hal_waitUntil(LMIC.radio.rxtime); // busy wait until exact rx time
         opmode(OPMODE_RX); // no single rx mode available in FSK
         LMICOS_logEventUint32("+Rx FSK", nLate);
         rxlate(nLate);
@@ -1067,7 +1115,7 @@ static void rxfsk (u1_t rxmode) {
 
 static void startrx (u1_t rxmode) {
     ASSERT( (readReg(RegOpMode) & OPMODE_MASK) == OPMODE_SLEEP );
-    if(getSf(LMIC.rps) == FSK) { // FSK modem
+    if(getSf(LMIC.radio.rps) == FSK) { // FSK modem
         rxfsk(rxmode);
     } else { // LoRa modem
         rxlora(rxmode);
@@ -1162,6 +1210,7 @@ int radio_init () {
     return 1;
 }
 
+///
 /// \brief Generate an 8-bit uniformly-distributed integer.
 ///
 /// \details
@@ -1201,6 +1250,7 @@ u1_t radio_rssi () {
     return r;
 }
 
+///
 /// \brief Measure the current broadband RSSI for the current channel.
 ///
 /// \details
@@ -1229,7 +1279,7 @@ void radio_monitor_rssi(ostime_t nTicks, oslmic_radio_rssi_t *pRssi) {
     // while we're waiting for the PLLs to spin up, determine which
     // band we're in and choose the base RSSI.
 #if defined(CFG_sx1276_radio)
-    if (LMIC.freq > SX127X_FREQ_LF_MAX) {
+    if (LMIC.radio.freq > SX127X_FREQ_LF_MAX) {
             rssiAdjust = SX1276_RSSI_ADJUST_HF;
     } else {
             rssiAdjust = SX1276_RSSI_ADJUST_LF;
@@ -1290,11 +1340,46 @@ static CONST_TABLE(u2_t, LORA_RXDONE_FIXUP)[] = {
     [SF12] = us2osticks(31189), // (1022 ticks)
 };
 
-// called by hal ext IRQ handler
-// (radio goes to stanby mode after tx/rx operations)
+///
+/// \brief legacy radio IRQ handler
+///
+/// \param [in] dio is the image of the DIO0..n pins observed by the primary ISR.
+///
+/// \details
+///     The HAL is responsible for detecting transitions on the SX127x DIO pins,
+///     and scheduling this routine. This routine must run as part of `os_runloop_once()`;
+///     it must not be called directly from a primary ISR.
+///
+///     This routine is for legacy use only; it is for use by older HALs that cannot
+///     capture the interrupt time in the primary ISR.
+///
+/// \sa radio_irq_handler_v2
+///
+
 void radio_irq_handler (u1_t dio) {
     radio_irq_handler_v2(dio, os_getTime());
 }
+
+///
+/// \brief Radio IRQ handler
+///
+/// \param [in] dio is the image of the DIO0..n pins observed by the primary ISR.
+/// \param [in] now is the HALs best estimate of the time of teh interrupt.
+///
+/// \details
+///     The HAL is responsible for detecting transitions on the SX127x DIO pins,
+///     and scheduling this routine. This routine must run as part of `os_runloop_once()`;
+///     it must not be called directly from a primary ISR.
+///
+///     The radio registers are interrogated, and the interrupt is processed. The
+///     radio is then put back to sleep, and the background is scheduled.
+///
+/// \note
+///     If continuous transmit mode is configured, then this routine immediately
+///     schedules a new transmit, and never completes to the background.
+///
+/// \sa radio_irq_handler_v2
+///
 
 void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
     LMIC_API_PARAMETER(dio);
@@ -1314,35 +1399,41 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
     return;
 #else /* ! CFG_TxContinuousMode */
 
+    lmic_radio_state_t event;
+    event = LMIC_RADIO_EV_NONE;
+
 #if LMIC_DEBUG_LEVEL > 0
     ostime_t const entry = now;
 #endif
+
     if( (readReg(RegOpMode) & OPMODE_LORA) != 0) { // LORA modem
         u1_t flags = readReg(LORARegIrqFlags);
         LMIC.saveIrqFlags = flags;
         LMICOS_logEventUint32("radio_irq_handler_v2: LoRa", flags);
         LMIC_X_DEBUG_PRINTF("IRQ=%02x\n", flags);
         if( flags & IRQ_LORA_TXDONE_MASK ) {
+            event = LMIC_RADIO_EV_TXDONE;
             // save exact tx time
             LMIC.txend = now - us2osticks(43); // TXDONE FIXUP
         } else if( flags & IRQ_LORA_RXDONE_MASK ) {
+            event = LMIC_RADIO_EV_RXDONE;
             // save exact rx time
-            if(getBw(LMIC.rps) == BW125) {
-                now -= TABLE_GET_U2(LORA_RXDONE_FIXUP, getSf(LMIC.rps));
+            if(getBw(LMIC.radio.rps) == BW125) {
+                now -= TABLE_GET_U2(LORA_RXDONE_FIXUP, getSf(LMIC.radio.rps));
             }
-            LMIC.rxtime = now;
+            LMIC.radio.rxtime = now;
             // read the PDU and inform the MAC that we received something
-            LMIC.dataLen = (readReg(LORARegModemConfig1) & SX127X_MC1_IMPLICIT_HEADER_MODE_ON) ?
+            LMIC.radio.dataLen = (readReg(LORARegModemConfig1) & SX127X_MC1_IMPLICIT_HEADER_MODE_ON) ?
                 readReg(LORARegPayloadLength) : readReg(LORARegRxNbBytes);
             // set FIFO read address pointer
             writeReg(LORARegFifoAddrPtr, readReg(LORARegFifoRxCurrentAddr));
             // now read the FIFO
-            readBuf(RegFifo, LMIC.frame, LMIC.dataLen);
+            readBuf(RegFifo, LMIC.radio.pFrame, LMIC.radio.dataLen);
             // read rx quality parameters
             LMIC.snr  = readReg(LORARegPktSnrValue); // SNR [dB] * 4
             u1_t const rRssi = readReg(LORARegPktRssiValue);
             s2_t rssi = rRssi;
-            if (LMIC.freq > SX127X_FREQ_LF_MAX)
+            if (LMIC.radio.freq > SX127X_FREQ_LF_MAX)
                 rssi += SX127X_RSSI_ADJUST_HF;
             else
                 rssi += SX127X_RSSI_ADJUST_LF;
@@ -1357,13 +1448,23 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
             // ugh compatibility requires a biased range. RSSI
             LMIC.rssi = (s1_t) (RSSI_OFF + (rssi < -196 ? -196 : rssi > 63 ? 63 : rssi)); // RSSI [dBm] (-196...+63)
         } else if( flags & IRQ_LORA_RXTOUT_MASK ) {
+            event = LMIC_RADIO_EV_RXDONE | LMIC_RADIO_EV_RXTIMEOUT;
             // indicate timeout
-            LMIC.dataLen = 0;
+            LMIC.radio.dataLen = 0;
 #if LMIC_DEBUG_LEVEL > 0
             ostime_t now2 = os_getTime();
             LMIC_DEBUG_PRINTF("rxtimeout: entry: %"LMIC_PRId_ostime_t" rxtime: %"LMIC_PRId_ostime_t" entry-rxtime: %"LMIC_PRId_ostime_t" now-entry: %"LMIC_PRId_ostime_t" rxtime-txend: %"LMIC_PRId_ostime_t"\n", entry,
-                LMIC.rxtime, entry - LMIC.rxtime, now2 - entry, LMIC.rxtime-LMIC.txend);
+                LMIC.radio.rxtime, entry - LMIC.radio.rxtime, now2 - entry, LMIC.radio.rxtime-LMIC.txend);
 #endif
+        }
+        else {
+            // we're not sure why we're here... treat as timeout.
+            LMIC.radio.dataLen = 0;
+            LMICOS_logEventUint32("unexpected LoRa radio interrupt", LMIC.radio.state);
+            if (os_radio_isTxActive(LMIC.radio.state))
+                event |= LMIC_RADIO_EV_TXDONE | LMIC_RADIO_EV_TXUNKNOWN;
+            if (os_radio_isRxActive(LMIC.radio.state))
+                event |= LMIC_RADIO_EV_RXDONE | LMIC_RADIO_EV_RXUNKNOWN;
         }
         // mask all radio IRQs
         writeReg(LORARegIrqFlagsMask, 0xFF);
@@ -1376,26 +1477,35 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
         LMICOS_logEventUint32("*radio_irq_handler_v2: FSK", ((u2_t)flags2 << 8) | flags1);
 
         if( flags2 & IRQ_FSK2_PACKETSENT_MASK ) {
+            event = LMIC_RADIO_EV_TXDONE;
+
             // save exact tx time
             LMIC.txend = now;
         } else if( flags2 & IRQ_FSK2_PAYLOADREADY_MASK ) {
+            event = LMIC_RADIO_EV_RXDONE;
+
             // save exact rx time
-            LMIC.rxtime = now;
+            LMIC.radio.rxtime = now;
             // read the PDU and inform the MAC that we received something
-            LMIC.dataLen = readReg(FSKRegPayloadLength);
+            LMIC.radio.dataLen = readReg(FSKRegPayloadLength);
             // now read the FIFO
-            readBuf(RegFifo, LMIC.frame, LMIC.dataLen);
+            readBuf(RegFifo, LMIC.radio.pFrame, LMIC.radio.dataLen);
             // read rx quality parameters
             LMIC.snr  = 0;              // SX127x doesn't give SNR for FSK.
             LMIC.rssi = -64 + RSSI_OFF; // SX127x doesn't give packet RSSI for FSK,
                                         // so substitute a dummy value.
         } else if( flags1 & IRQ_FSK1_TIMEOUT_MASK ) {
+            event = LMIC_RADIO_EV_RXDONE | LMIC_RADIO_EV_RXTIMEOUT;
             // indicate timeout
-            LMIC.dataLen = 0;
+            LMIC.radio.dataLen = 0;
         } else {
-            // ASSERT(0);
             // we're not sure why we're here... treat as timeout.
-            LMIC.dataLen = 0;
+            LMIC.radio.dataLen = 0;
+            LMICOS_logEventUint32("unexpected FSK radio interrupt", LMIC.radio.state);
+            if (os_radio_isTxActive(LMIC.radio.state))
+                event |= LMIC_RADIO_EV_TXDONE | LMIC_RADIO_EV_TXUNKNOWN;
+            if (os_radio_isRxActive(LMIC.radio.state))
+                event |= LMIC_RADIO_EV_RXDONE | LMIC_RADIO_EV_RXUNKNOWN;
         }
 
         // in FSK, we need to put the radio in standby first.
@@ -1404,63 +1514,126 @@ void radio_irq_handler_v2 (u1_t dio, ostime_t now) {
     // go from standby to sleep
     opmode(OPMODE_SLEEP);
     // run os job (use preset func ptr)
-    os_setCallback(&LMIC.osjob, LMIC.osjob.func);
+    radio_complete(event);
 #endif /* ! CFG_TxContinuousMode */
 }
 
-/*!
+static void os_radio_reset(void) {
+    // put radio to sleep
+    LMICOS_logEvent("os_radio_reset");
+    opmode(OPMODE_SLEEP);
+    if (LMIC.radio.pRadioDoneJob != NULL) {
+        os_clearCallback(LMIC.radio.pRadioDoneJob);
+        LMIC.radio.pRadioDoneJob = NULL;
+    }
+    LMIC.radio.state = LMIC_RADIO_EV_NONE;
 
-\brief Initiate a radio operation.
-
-\param mode [in] Selects the operation to be performed.
-
-\details
-The requested radio operation is initiated. Some operations complete
-immediately; others require hardware to do work, and don't complete until
-an interrupt occurs. In that case, `LMIC.osjob` is scheduled. Because the
-interrupt may occur right away, it's important that the caller initialize
-`LMIC.osjob` before calling this routine.
-
-- `RADIO_RST` causes the radio to be put to sleep. No interrupt follows;
-when control returns, the radio is ready for the next operation.
-
-- `RADIO_TX` and `RADIO_TX_AT` launch the transmission of a frame. An interrupt will
-occur, which will cause `LMIC.osjob` to be scheduled with its current
-function.
-
-- `RADIO_RX` and `RADIO_RX_ON` launch either single or continuous receives.
-An interrupt will occur when a packet is recieved or the receive times out,
-which will cause `LMIC.osjob` to be scheduled with its current function.
-
-*/
+    // the radio needs time to recover from a reset;
+    // otherwise we won't see the desired sleep state
+    // when doing something else.
+    hal_waitUntil(os_getTime() + ms2osticks(1));
+}
 
 void os_radio (u1_t mode) {
+    LMIC.radio.freq = LMIC.freq;
+    LMIC.radio.pFrame = LMIC.frame;
+    LMIC.radio.rxtime = LMIC.nextRxTime;
+    LMIC.radio.rps = LMIC.rps;
+    LMIC.radio.rxsyms = LMIC.rxsyms;
+    LMIC.radio.dataLen = LMIC.radio.dataLen;
+    LMIC.radio.flags = 0;
+    if (LMIC.noRXIQinversion)
+        LMIC.radio.flags |= LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION;
+    os_radio_v2(mode, &LMIC.osjob);
+}
+
+///
+/// \brief Initiate a radio operation.
+///
+/// \param mode [in]    Selects the operation to be performed.
+/// \param pJob [inout]  Job to be scheduled when operation completes.
+///
+/// \details
+///     The requested radio operation is initiated. Some operations complete
+///     immediately; others require hardware to do work, and don't complete until
+///     an interrupt occurs. In that case, `pJob` is scheduled.
+///     Because the
+///     interrupt may occur right away, it's important that the caller initialize
+///     `pJob` before calling this routine.
+///
+///     - `RADIO_RST` causes the radio to be put to sleep. No interrupt follows;
+///     when control returns, the radio is ready for the next operation. `pJob`
+///     is not scheduled. If an operation was pending, it is canceled.
+///
+///     - `RADIO_TX` and `RADIO_TX_AT` launch the transmission of a frame. An interrupt will
+///     occur, which will cause `pJob` to be scheduled with its current
+///     function.
+///
+///     - `RADIO_RX`, `RADIO_RX_ON` and `RADIO_RX_ON_C` launch either timed or
+///     untimed receives. An interrupt will occur when a packet is recieved or
+///     the receive times out, which will cause `pJob` to be scheduled with
+///     its current function. `RADIO_RX_ON_C` is used to schedule a request that
+///     might be redundat, for class C support.
+///
+/// \note
+///     It's a quirk of the implementation that timeouts may be handled by the very
+///     same `pJob` that we use for completion. os_setCallback() cancels
+///     any previous operation for the job. It's all a little fragile, because
+///     most callers use the exact same `LMIC.osjob` object that is used for other
+///     purposes throughout the LMIC.
+///
+
+void os_radio_v2 (u1_t mode, osjob_t *pJob) {
+    // handle redundant class-C requests.
+    if (mode == RADIO_RXON_C &&
+        os_radio_isRxActive(LMIC.radio.state) &&
+        pJob == LMIC.radio.pRadioDoneJob) {
+        LMICOS_logEventUint32("redundant class C RX", LMIC.radio.state);
+        return;
+    }
+
+    // handle requests while radio is active: cancel.
+    if (mode != RADIO_RST) {
+        if (LMIC.radio.state != LMIC_RADIO_EV_NONE) {
+            LMICOS_logEventUint32("request while radio active", LMIC.radio.state);
+            // recurse and kill the pending activity
+            os_radio_reset();
+        }
+        // record job
+        LMIC.radio.pRadioDoneJob = pJob;
+    }
+
     switch (mode) {
       case RADIO_RST:
-        // put radio to sleep
-        opmode(OPMODE_SLEEP);
+        os_radio_reset();
         break;
 
       case RADIO_TX:
         // transmit frame now
         LMIC.txend = 0;
-        starttx(); // buf=LMIC.frame, len=LMIC.dataLen
+        LMIC.radio.state = LMIC_RADIO_EV_TXSTART;
+        starttx(); // buf=LMIC.radio.pFrame, len=LMIC.radio.dataLen
         break;
 
       case RADIO_TX_AT:
+        // make sure transmit time is non-zero to force
+        // scheduling at a specific time.
         if (LMIC.txend == 0)
             LMIC.txend = 1;
+        LMIC.radio.state = LMIC_RADIO_EV_TXSTART;
         starttx();
         break;
 
       case RADIO_RX:
         // receive frame now (exactly at rxtime)
-        startrx(RXMODE_SINGLE); // buf=LMIC.frame, time=LMIC.rxtime, timeout=LMIC.rxsyms
+        LMIC.radio.state = LMIC_RADIO_EV_RXSTART;
+        startrx(RXMODE_SINGLE); // buf=LMIC.radio.pFrame, time=LMIC.radio.rxtime, timeout=LMIC.radio.rxsyms
         break;
 
       case RADIO_RXON:
         // start scanning for beacon now
-        startrx(RXMODE_SCAN); // buf=LMIC.frame
+        LMIC.radio.state = LMIC_RADIO_EV_RXSTART;
+        startrx(RXMODE_SCAN); // buf=LMIC.radio.pFrame
         break;
     }
 }

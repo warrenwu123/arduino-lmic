@@ -212,6 +212,9 @@ uint os_getTimeSecs (void);
 #ifndef os_radio
 void os_radio (u1_t mode);
 #endif
+#ifndef os_radio_v2
+void os_radio_v2 (u1_t mode, xref2osjob_t job);
+#endif
 #ifndef os_getBattLevel
 u1_t os_getBattLevel (void);
 #endif

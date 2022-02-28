@@ -18,25 +18,26 @@
 	- [`os_radio(RADIO_TX)`](#os_radioradio_tx)
 	- [`os_radio(RADIO_RX)`](#os_radioradio_rx)
 	- [`os_radio(RADIO_RXON)`](#os_radioradio_rxon)
+	- [`os_radio(RADIO_RXON_C)`](#os_radioradio_rxon_c)
 	- [`os_radio(RADIO_TX_AT)`](#os_radioradio_tx_at)
 - [Common parameters](#common-parameters)
-	- [`LMIC.rps` (IN)](#lmicrps-in)
-	- [`LMIC.freq` (IN)](#lmicfreq-in)
+	- [`LMIC.radio.rps` (IN)](#lmicradiorps-in)
+	- [`LMIC.radio.freq` (IN)](#lmicradiofreq-in)
 	- [`LMIC.saveIrqFlags` (OUT)](#lmicsaveirqflags-out)
-	- [`LMIC.osjob` (IN/OUT)](#lmicosjob-inout)
+	- [`LMIC.radio.pRadioDoneJob` (IN/OUT)](#lmicradiopradiodonejob-inout)
 - [Transmit parameters](#transmit-parameters)
-	- [`LMIC.radio_txpow` (IN)](#lmicradio_txpow-in)
-	- [`LMIC.frame[]` (IN)](#lmicframe-in)
-	- [`LMIC.datalen` (IN)](#lmicdatalen-in)
+	- [`LMIC.radio.txpow` (IN)](#lmicradiotxpow-in)
+	- [`LMIC.radio.pFrame[]` (IN)](#lmicradiopframe-in)
+	- [`LMIC.radio.datalen` (IN)](#lmicradiodatalen-in)
 	- [`LMIC.txend` (IN, OUT)](#lmictxend-in-out)
-- [Receive parameters](#receive-parameters)
-	- [`LMIC.frame[]` (OUT)](#lmicframe-out)
-	- [`LMIC.datalen` (OUT)](#lmicdatalen-out)
-	- [`LMIC.rxtime` (IN/OUT)](#lmicrxtime-inout)
 	- [`LMIC.lbt_ticks` (IN)](#lmiclbt_ticks-in)
 	- [`LMIC.lbt_dbmax` (IN)](#lmiclbt_dbmax-in)
-	- [`LMIC.rxsyms` (IN)](#lmicrxsyms-in)
-	- [`LMIC.noRXIQinversion` (IN)](#lmicnorxiqinversion-in)
+- [Receive parameters](#receive-parameters)
+	- [`LMIC.radio.pFrame[]` (OUT)](#lmicradiopframe-out)
+	- [`LMIC.radio.dataLen` (OUT)](#lmicradiodatalen-out)
+	- [`LMIC.radio.rxtime` (IN/OUT)](#lmicradiorxtime-inout)
+	- [`LMIC.radio.rxsyms` (IN)](#lmicradiorxsyms-in)
+	- [`LMIC.radio.flags` (IN)](#lmicradioflags-in)
 	- [`LMIC.snr` (OUT)](#lmicsnr-out)
 	- [`LMIC.rssi` (OUT)](#lmicrssi-out)
 
@@ -68,9 +69,13 @@ When the operation completes, `LMIC.osjob` is scheduled.
 
 ### `os_radio(RADIO_RXON)`
 
-The radio is placed in continuous receive mode. If a frame is received, `LMIC.osjob` is scheduled. Continuous receive is canceled by calling [`os_radio(RADIO_RST)`](#os_radioradio_rst).
+The radio is placed in continuous receive mode. If a frame is received, `LMIC.osjob` is scheduled. Continuous receive is explicitly canceled by calling [`os_radio(RADIO_RST)`](#os_radioradio_rst) or implicitly by calling any other radio function.
 
 This operation is not supported in FSK mode.
+
+### `os_radio(RADIO_RXON_C)`
+
+This operation is identical to `os_radio(RADIO_RXON)`, but redundant calls are suppressed.
 
 ### `os_radio(RADIO_TX_AT)`
 
@@ -78,7 +83,7 @@ This is like `os_radio(RADIO_TX)`, but the transmission is scheduled at `LMIC.tx
 
 ## Common parameters
 
-### `LMIC.rps` (IN)
+### `LMIC.radio.rps` (IN)
 
 This is the "radio parameter setting", and it encodes several radio settings.
 
@@ -88,7 +93,7 @@ This is the "radio parameter setting", and it encodes several radio settings.
 - CRC enabled/disabled
 - Implicit header mode on/off. (If on, receive length must be known in advance.)
 
-### `LMIC.freq` (IN)
+### `LMIC.radio.freq` (IN)
 
 This specifies the frequency, in Hertz.
 
@@ -96,21 +101,21 @@ This specifies the frequency, in Hertz.
 
 Updated for LoRa operations only; the IRQ flags at the time of interrupt.
 
-### `LMIC.osjob` (IN/OUT)
+### `LMIC.radio.pRadioDoneJob` (IN/OUT)
 
-When asynchronous operations complete, `LMIC.osjob.func` is used as the callback function, and `LMIC.osjob` is used to schedule the work.
+When asynchronous operations complete, `LMIC.radio.pRadioDoneJob->func` is used as the callback function, and `LMIC.radio.pRadioDoneJob` is used to schedule the work.
 
 ## Transmit parameters
 
-### `LMIC.radio_txpow` (IN)
+### `LMIC.radio.txpow` (IN)
 
 This specifies the transmit power in dBm.
 
-### `LMIC.frame[]` (IN)
+### `LMIC.radio.pFrame[]` (IN)
 
 The array of data to be sent.
 
-### `LMIC.datalen` (IN)
+### `LMIC.radio.datalen` (IN)
 
 The length of the array to be sent.
 
@@ -120,22 +125,6 @@ For `RADIO_TX_AT`, an input parameter, for the scheduled TX time.
 
 For all transmissions, updated to the OS time at which the TX end interrupt was recognized.
 
-## Receive parameters
-
-### `LMIC.frame[]` (OUT)
-
-Filled with data received.
-
-### `LMIC.datalen` (OUT)
-
-Set to number of bytes received in total.
-
-### `LMIC.rxtime` (IN/OUT)
-
-Input: When to start receiving, in OS tick time.
-
-Output: time of RXDONE interrupt. (Note: FSK timeout doesn't currently set this cell on RX timeout.)
-
 ### `LMIC.lbt_ticks` (IN)
 
 How long to monitor for LBT, in OS ticks.
@@ -144,13 +133,29 @@ How long to monitor for LBT, in OS ticks.
 
 Maximum RSSI on channel before transmit.
 
-### `LMIC.rxsyms` (IN)
+## Receive parameters
+
+### `LMIC.radio.pFrame[]` (OUT)
+
+Filled with data received.
+
+### `LMIC.radio.dataLen` (OUT)
+
+Set to number of bytes received in total.
+
+### `LMIC.radio.rxtime` (IN/OUT)
+
+Input: When to start receiving, in OS tick time. Only used for `os_radio(RADIO_RX)`; not used for continuous receive.
+
+Output: time of RXDONE interrupt. (Note: FSK timeout doesn't currently set this cell on RX timeout.)
+
+### `LMIC.radio.rxsyms` (IN)
 
 The timeout in symbols. Only used for `os_radio(RADIO_RX)`; not used for continuous receive.
 
-### `LMIC.noRXIQinversion` (IN)
+### `LMIC.radio.flags` (IN)
 
-If true, disable IQ inversion during receive.
+If the bit `LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION` is set, disable IQ inversion during receive.
 
 ### `LMIC.snr` (OUT)
 
