@@ -1540,7 +1540,7 @@ void os_radio (u1_t mode) {
     LMIC.radio.rxtime = LMIC.nextRxTime;
     LMIC.radio.rps = LMIC.rps;
     LMIC.radio.rxsyms = LMIC.rxsyms;
-    LMIC.radio.dataLen = LMIC.radio.dataLen;
+    LMIC.radio.dataLen = LMIC.dataLen;
     LMIC.radio.flags = 0;
     if (LMIC.noRXIQinversion)
         LMIC.radio.flags |= LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION;
