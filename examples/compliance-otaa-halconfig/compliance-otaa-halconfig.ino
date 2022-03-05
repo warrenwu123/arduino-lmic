@@ -31,8 +31,8 @@ class cEventQueue;
 //
 
 // AppEUI: must be in little-endian format, so least-significant-byte
-// first.  This corresponds to 0x0000000000000000
-static const u1_t PROGMEM APPEUI[8]= { 0, 0, 0, 0, 0, 0, 0, 0 };
+// first.  This corresponds to 0x0000000000000001
+static const u1_t PROGMEM APPEUI[8]= { 1, 0, 0, 0, 0, 0, 0, 0 };
 void os_getArtEui (u1_t* buf) { memcpy_P(buf, APPEUI, 8); }
 
 // DevEUI: This should also be in little endian format, see above.
