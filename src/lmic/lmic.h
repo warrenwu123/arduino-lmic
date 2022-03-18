@@ -1024,6 +1024,10 @@ lmic_compliance_rx_action_t LMIC_complianceRxMessage(u1_t port, const u1_t *pMes
 // We provide stubs so that users don't need to litter their code with #if unless
 // they want to.
 
+static inline bit_t LMIC_isConfiguredClassC(void) {
+    return LMIC_ENABLE_class_c;
+}
+
 #if LMIC_ENABLE_class_c
 /// \brief turn class C operation off or on. By default, it's off.
 bit_t LMIC_enableClassC(bit_t fOnIfTrue);
