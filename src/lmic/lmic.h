@@ -277,7 +277,6 @@ enum { OP_NONE     = 0x0000,
        OP_LINKDEAD = 0x1000, //!< link was reported as dead
        OP_TESTMODE = 0x2000, //!< developer test mode
        OP_UNJOIN   = 0x4000, //!< unjoin and rejoin on next engineUpdate().
-       OP_CLASSC   = 0x8000, //!< class C mode is enabled.
 };
 // TX-RX transaction flags - report back to user
 enum { TXRX_ACK    = 0x80,   //!< confirmed UP frame was acked
