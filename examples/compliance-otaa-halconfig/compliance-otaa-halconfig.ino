@@ -793,6 +793,12 @@ void setupForNetwork(bool preJoin) {
 #if defined(ARDUINO_LMIC_CFG_SUBBAND) && ARDUINO_LMIC_CFG_SUBBAND != -1
     LMIC_selectSubBand(ARDUINO_LMIC_CFG_SUBBAND);
 #endif // defined(ARDUINO_LMIC_CFG_SUBBAND) && ARDUINO_LMIC_CFG_SUBBAND != -1
+
+    if (LMIC_isConfiguredClassC()) {
+        if (! LMIC_enableClassC(1)) {
+            Serial.println(F("Class C enabled failed"));
+        }
+    }
 }
 
 void loop() {
