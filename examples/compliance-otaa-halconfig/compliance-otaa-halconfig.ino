@@ -779,6 +779,10 @@ void setup_printSignOn()
     Serial.print(unsigned(ARDUINO_LMIC_CFG_SUBBAND));
 #endif // defined(ARDUINO_LMIC_CFG_SUBBAND) && ARDUINO_LMIC_CFG_SUBBAND != -1
 
+    if (LMIC_isConfiguredClassC()) {
+        Serial.print(F(", Class C"));
+    }
+
     Serial.println(F(".\nRemember to select 'Line Ending: Newline' at the bottom of the monitor window."));
 
     setup_printSignOnDashLine();
