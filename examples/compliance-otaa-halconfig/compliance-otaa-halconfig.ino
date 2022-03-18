@@ -212,9 +212,17 @@ void LMICOS_logEventUint32(const char *pMessage, uint32_t datum)
 hal_failure_handler_t log_assertion;
 
 void log_assertion(const char *pMessage, uint16_t line) {
+    // Append the assertion to the message queue.
     eventQueue.putEvent(ev_t(-3), pMessage, line);
+
+    // Print as much info as we have. And dump registers if
+    // event logging is enabled:
     eventPrintAll();
+
+    // then signal that we had an assert failure
     Serial.println(F("***HALTED BY ASSERT***"));
+
+    // and hang.
     while (true)
         yield();
 }
