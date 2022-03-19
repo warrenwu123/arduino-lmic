@@ -8,29 +8,54 @@
 //
 //	Both are encoded as sflt16 values (see LMIC README).
 //
+// Original is at:
+//  https://github.com/mcci-catena/arduino-lmic/ at extra/ttnv3-decoder-dht22.js
+//
 
-// this function is called by TTNv3
-//    input.bytes has the data
-//    input.fPort is the port number 
+//
+// Name: decodeUplink()
+//
+// Function:
+//    The entry point:
+//
+// This function is called by TTNv3; TTNv3 looks for the name
+// `decodeUplink()`.
+//
+// tInput is an object:
+//    tInput.bytes has the data as a byte array,
+//    tInput.fPort is the port number as a number.
+//
+// The function returns an object:
+//    result.data is an object, containing the decoded data.
+//    result.warnings is an array (possibly empty) of warning messages.
+//    result.errors is an array (hopefully empty) of error messages.
+//
 function decodeUplink(tInput) {
   var bytes = tInput.bytes;
   var port = tInput.fPort;
+
+  // validate the port number
   if (port !== 1)
     return { errors: [ "invalid port: " + port ] };
+
+  // validate the length.
   if (bytes.length !== 4)
     return { errors: [ "invalid length: " + bytes.length ] };
-  
+
+  // convert the raw bytes into equivalent raw (encoded) integers
   var tRaw = (bytes[0] << 8) + bytes[1];
-  var rhRaw = (bytes[2] << 8 ) + bytes[3]; 
-  
+  var rhRaw = (bytes[2] << 8 ) + bytes[3];
+
+  // decode the raw integers into unscaled floating point numbers
   var tFloatRaw = sflt162f(tRaw);
   var rhFloatRaw = sflt162f(rhRaw);
-  
+
   // the sending program divided by 100 before encoding. so now
-  // we must do the reverse
+  // we must do the reverse to scale back to engineering units.
   var tFinal = tFloatRaw * 100;
   var rhFinal = rhFloatRaw * 100;
-  
+
+  // prepare the result
   var result = {
     data: {
       t:  tFinal, // something
@@ -39,9 +64,11 @@ function decodeUplink(tInput) {
     warnings: [],
     errors: []
   };
+
   return result;
 }
 
+// decode an encoded 16-bit signed float.
 function sflt162f(rawSflt16)
     {
     // rawSflt16 is the 2-byte number decoded from wherever;
