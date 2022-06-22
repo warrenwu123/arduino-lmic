@@ -3230,6 +3230,7 @@ bit_t LMIC_enableClassC(bit_t fOnIfTrue) {
 ///
 static void externalRequestCb(osjob_t *pJob) {
     bit_t fUpdateNeeded = 0;
+    LMIC_UNREFERENCED_PARAMETER(pJob);
 
     // reset the job pending flag.
     LMIC.classC.requests.f.fPending = 0;
