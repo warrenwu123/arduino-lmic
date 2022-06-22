@@ -166,7 +166,7 @@ LMIC_SecureElement_DECLARE_DRIVER_FNS(Default);
 static inline
 LMIC_SecureElement_Error_t LMIC_ABI_STD
 LMIC_SecureElement_initialize(void) {
-    LMIC_SecureElement_METHOD(LMIC_CFG_SecureElement_DRIVER, initialize)();
+    return LMIC_SecureElement_METHOD(LMIC_CFG_SecureElement_DRIVER, initialize)();
 }
 
 /// \copydoc LMIC_SecureElement_getRandomU1_t

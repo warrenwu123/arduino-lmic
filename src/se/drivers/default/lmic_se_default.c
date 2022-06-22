@@ -157,6 +157,7 @@ LMIC_SecureElement_Default_getNwkSKey(LMIC_SecureElement_Aes128Key_t *pNwkSKey, 
     if (iKey != LMIC_SecureElement_KeySelector_Unicast)
         return LMIC_SecureElement_Error_InvalidParameter;
     os_copyMem(pNwkSKey->bytes, s_nwkSKey.bytes, sizeof(pNwkSKey->bytes));
+    return LMIC_SecureElement_Error_OK;
 }
 
 /*!
@@ -174,6 +175,7 @@ LMIC_SecureElement_Default_getAppSKey(LMIC_SecureElement_Aes128Key_t *pAppSKey, 
     if (iKey != LMIC_SecureElement_KeySelector_Unicast)
         return LMIC_SecureElement_Error_InvalidParameter;
     os_copyMem(pAppSKey->bytes, s_appSKey.bytes, sizeof(pAppSKey->bytes));
+    return LMIC_SecureElement_Error_OK;
 }
 
 // ================================================================================
@@ -501,6 +503,7 @@ LMIC_SecureElement_Default_aes128Encrypt(
     }
     os_copyMem(AESkey, pKey, 16);
     os_aes(AES_ENC, pOutput, 16);
+    return LMIC_SecureElement_Error_OK;
 }
 
 // end of group lmic_se_default.
