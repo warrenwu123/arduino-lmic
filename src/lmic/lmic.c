@@ -271,12 +271,16 @@ static void calcBcnRxWindowFromMillis (u1_t ms, bit_t ini) {
 // Setup scheduled RX window (ping/multicast slot)
 static void rxschedInit (xref2rxsched_t rxsched) {
     uint8_t key[16];
+    uint8_t frame[16];
     LMIC_SecureElement_Error_t seErr;
     os_clearMem(key,16);
-    os_clearMem(LMIC.frame+8,8);
-    os_wlsbf4(LMIC.frame, LMIC.bcninfo.time);
-    os_wlsbf4(LMIC.frame+4, LMIC.devaddr);
-    LMIC_SecureElement_aes128Encrypt(key, LMIC.frame, LMIC.frame);
+    os_clearMem(frame+8,8);
+    os_wlsbf4(frame, LMIC.bcninfo.time);
+    os_wlsbf4(frame+4, LMIC.devaddr);
+    seErr = LMIC_SecureElement_aes128Encrypt(key, frame, frame);
+    if (seErr != LMIC_SecureElement_Error_OK) {
+        LMICOS_logEventUint32("rxschedInit: enrypt failed", seErr);
+    }
     u1_t intvExp = rxsched->intvExp;
     ostime_t off = os_rlsbf2(LMIC.frame) & (0x0FFF >> (7 - intvExp)); // random offset (slot units)
     rxsched->rxbase = (LMIC.bcninfo.txtime +
@@ -1507,7 +1511,7 @@ static void setupRx1 (osjobcb_t func) {
 static void txDone (ostime_t delay, osjobcb_t func) {
 #if !defined(DISABLE_PING)
     if( (LMIC.opmode & (OP_TRACK|OP_PINGABLE|OP_PINGINI)) == (OP_TRACK|OP_PINGABLE) ) {
-        rxschedInit(&LMIC.ping);    // note: reuses LMIC.frame buffer!
+        rxschedInit(&LMIC.ping);
         LMIC.opmode |= OP_PINGINI;
     }
 #endif // !DISABLE_PING
@@ -2482,7 +2486,7 @@ static void processBeacon (xref2osjob_t osjob) {
     LMICbandplan_advanceBeaconChannel();
 #if !defined(DISABLE_PING)
     if( (LMIC.opmode & OP_PINGINI) != 0 )
-        rxschedInit(&LMIC.ping);  // note: reuses LMIC.frame buffer!
+        rxschedInit(&LMIC.ping);
 #endif // !DISABLE_PING
     reportEventAndUpdate(ev);
 }
