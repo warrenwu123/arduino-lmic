@@ -447,6 +447,7 @@ static void opmodeFSK() {
 static inline bit_t os_radio_isTxActive(lmic_radio_state_t state) {
     if ((state & (LMIC_RADIO_EV_TXSTART | LMIC_RADIO_EV_TXDONE)) == LMIC_RADIO_EV_TXSTART)
         return 1;
+    return 0;
 }
 
 ///
@@ -455,6 +456,7 @@ static inline bit_t os_radio_isTxActive(lmic_radio_state_t state) {
 static inline bit_t os_radio_isRxActive(lmic_radio_state_t state) {
     if ((state & (LMIC_RADIO_EV_RXSTART | LMIC_RADIO_EV_RXDONE)) == LMIC_RADIO_EV_RXSTART)
         return 1;
+    return 0;
 }
 
 ///
