@@ -106,7 +106,7 @@ extern "C"{
 	((((major)*UINT32_C(1)) << 24) | (((minor)*UINT32_C(1)) << 16) | (((patch)*UINT32_C(1)) << 8) | (((local)*UINT32_C(1)) << 0))
 
 #define	ARDUINO_LMIC_VERSION    \
-    ARDUINO_LMIC_VERSION_CALC(5, 0, 0, 1)  /* 5.0.0-pre1 */
+    ARDUINO_LMIC_VERSION_CALC(5, 0, 0, 2)  /* 5.0.0-pre1 */
 
 #define	ARDUINO_LMIC_VERSION_GET_MAJOR(v)	\
 	((((v)*UINT32_C(1)) >> 24u) & 0xFFu)
@@ -759,6 +759,10 @@ struct lmic_t {
     /// the OS job object. pointer alignment. This is only for use by the LMIC for
     /// running the state machine. Don't use it for other purposes.
     osjob_t     osjob;
+
+    /// the OS job object for events. pointer alignment. This is only for use by
+    /// the LMIC for injecting deferred callbacks. Don't use it for other purposes.
+    osjob_t     osjob_defer;
 
 #if !defined(DISABLE_BEACONS)
     bcninfo_t   bcninfo;      ///< Last received beacon info

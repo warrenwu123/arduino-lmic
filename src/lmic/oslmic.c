@@ -100,6 +100,25 @@ void os_setCallback (osjob_t* job, osjobcb_t cb) {
     hal_enableIRQs();
 }
 
+///
+/// \brief set function in idle job (for future use)
+///
+/// \param [inout] job points to the job block to be updated.
+/// \param [in] cb is the desired new callback.
+///
+/// We make sure that the job is idle, and then we set its
+/// function pointer. If the job was not idle, we log a message.
+///
+bit_t os_setIdleJobFunction(osjob_t *job, osjobcb_t cb) {
+    bit_t const result = unlinkjob(getJobQueue(job), job);
+
+    if (result) {
+        LMICOS_logEventUint32("job was previously in queue with cb", job->func);
+    }
+    job->func = cb;
+    return result;
+}
+
 // schedule timed job
 void os_setTimedCallback (osjob_t* job, ostime_t time, osjobcb_t cb) {
     osjob_t** pnext;

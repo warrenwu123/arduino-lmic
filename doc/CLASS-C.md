@@ -25,3 +25,7 @@ These are working notes for Class C implementation, not really permanent documen
 
 - [ ] how does the device distinguish (if at all) between a class C downlink received during the RX2 window, and a class A downlink? Does it simply assume that the network does the right thing?
 - [ ] do we need to tell the rx frame processor whether a message was received during the RX2 window? Or can we let the network sort this out? For now, we arrange to be able to tell the rx frame processor, but we'll assume the network will sort things out.
+
+## Building with arduino-cli for class C
+
+arduino-cli compile -b "mcci:stm32:mcci_catena_4612:upload_method=STLink_bl,xserial=usb,sysclk=pll32m,boot=trusted,opt=osstd,lorawan_region=us915,lorawan_network=generic,lorawan_subband=sb0" --build-path /c/tmp/build-4612-class-c examples/compliance-otaa-halconfig/compliance-otaa-halconfig.ino

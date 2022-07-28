@@ -197,6 +197,9 @@ void os_setCallback (xref2osjob_t job, osjobcb_t cb);
 #ifndef os_setTimedCallback
 void os_setTimedCallback (xref2osjob_t job, ostime_t time, osjobcb_t cb);
 #endif
+#ifndef os_setIdleJobFunction
+bit_t os_setIdleJobFunction(osjob_t *job, osjobcb_t cb);
+#endif
 #ifndef os_clearCallback
 void os_clearCallback (xref2osjob_t job);
 #endif

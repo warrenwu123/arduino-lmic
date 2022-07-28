@@ -512,7 +512,7 @@ static void runReset (xref2osjob_t osjob) {
 #if !defined(DISABLE_JOIN)
     LMIC_startJoining();
 #else
-    os_setCallback(&LMIC.osjob, FUNC_ADDR(runEngineUpdate));
+    os_setCallback(osjob, FUNC_ADDR(runEngineUpdate));
 #endif // !DISABLE_JOIN
 }
 
@@ -1406,7 +1406,7 @@ static void setupRxClassC (void) {
         if (LMIC.noRXIQinversion) {
             LMIC.radio.flags |= LMIC_RADIO_FLAGS_NO_RX_IQ_INVERSION;
         }
-        LMIC.classC.job.func = processRxCDnData;
+        os_setIdleJobFunction(&LMIC.classC.job, processRxCDnData);
         os_radio_v2(RADIO_RXON_C, &LMIC.classC.job);
     }
 #endif // LMIC_ENABLE_class_c
@@ -1502,7 +1502,7 @@ static void setupRx1 (osjobcb_t func) {
     // Turn LMIC.rps from TX over to RX
     LMIC.rps = setNocrc(LMIC.rps,1);
     LMIC.dataLen = 0;
-    LMIC.osjob.func = func;
+    os_setIdleJobFunction(&LMIC.osjob, func);
     radioRx();
 }
 
@@ -1715,7 +1715,7 @@ static void processRx2Jacc (xref2osjob_t osjob) {
 static void setupRx2Jacc (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
-    LMIC.osjob.func = FUNC_ADDR(processRx2Jacc);
+    os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(processRx2Jacc));
     setupRx2();
 }
 
@@ -1773,7 +1773,7 @@ static void processRx2DnData (xref2osjob_t osjob) {
 static void setupRx2DnData (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
-    LMIC.osjob.func = FUNC_ADDR(processRx2DnData);
+    os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(processRx2DnData));
     setupRx2();
 }
 
@@ -2142,7 +2142,7 @@ bit_t LMIC_startJoining (void) {
         LMICbandplan_initJoinLoop();
         LMIC.opmode |= OP_JOINING;
         // reportEventAndUpdate will call engineUpdate which then starts sending JOIN REQUESTS
-        os_setCallback(&LMIC.osjob, FUNC_ADDR(startJoining));
+        os_setCallback(&LMIC.osjob_defer, FUNC_ADDR(startJoining));
         return 1;
     }
     return 0; // already joined
@@ -2156,7 +2156,7 @@ static void unjoinAndRejoin(xref2osjob_t osjob) {
 
 // do a deferred unjoin and rejoin, so not in engineupdate.
 void LMIC_unjoinAndRejoin(void) {
-    os_setCallback(&LMIC.osjob, FUNC_ADDR(unjoinAndRejoin));
+    os_setCallback(&LMIC.osjob_defer, FUNC_ADDR(unjoinAndRejoin));
 }
 
 #endif // !DISABLE_JOIN
@@ -2495,7 +2495,7 @@ static void processBeacon (xref2osjob_t osjob) {
 static void startRxBcn (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
-    LMIC.osjob.func = FUNC_ADDR(processBeacon);
+    os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(processBeacon));
     radioRx();
 }
 #endif // !DISABLE_BEACONS
@@ -2506,7 +2506,7 @@ static void startRxBcn (xref2osjob_t osjob) {
 static void startRxPing (xref2osjob_t osjob) {
     LMIC_API_PARAMETER(osjob);
 
-    LMIC.osjob.func = FUNC_ADDR(processPingRx);
+    os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(processPingRx));
     radioRx();
 }
 #endif // !DISABLE_PING
@@ -2604,7 +2604,7 @@ static void engineUpdate_inner (void) {
 #endif
                 }
                 buildJoinRequest();
-                LMIC.osjob.func = FUNC_ADDR(jreqDone);
+                os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(jreqDone));
             } else
 #endif // !DISABLE_JOIN
             {
@@ -2640,7 +2640,7 @@ static void engineUpdate_inner (void) {
                     reportEventNoUpdate(EV_TXCOMPLETE);
                     return;
                 }
-                LMIC.osjob.func = FUNC_ADDR(updataDone);
+                os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(updataDone));
             } // end of else (not joining)
             LMIC.rps    = setCr(updr2rps(txdr), (cr_t)LMIC.errcr);
             LMIC.dndr   = txdr;  // carry TX datarate (can be != LMIC.datarate) over to txDone/setupRx1
@@ -2699,7 +2699,7 @@ static void engineUpdate_inner (void) {
     LMIC.rxsyms = LMIC.bcnRxsyms;
     LMIC.nextRxTime = LMIC.bcnRxtime;
     if( now - rxtime >= 0 ) {
-        LMIC.osjob.func = FUNC_ADDR(processBeacon);
+        os_setIdleJobFunction(&LMIC.osjob, FUNC_ADDR(processBeacon));
 
         radioRx();
         return;
@@ -3190,7 +3190,7 @@ static osjobcbfn_t externalRequestCb;
 ///     This function non-zero for success, zero for failure.
 ///
 bit_t LMIC_enableClassC(bit_t fOnIfTrue) {
-    // if LMIC is stopped, we must rail.
+    // if LMIC is stopped, we must fail.
     if (LMICJ_isShutdown())
         return 0;
 
