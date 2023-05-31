@@ -75,7 +75,7 @@ This operation is not supported in FSK mode.
 
 ### `os_radio(RADIO_RXON_C)`
 
-This operation is identical to `os_radio(RADIO_RXON)`, but redundant calls are suppressed.
+This operation is identical to `os_radio(RADIO_RXON)`, but redundant calls are suppressed.  That is, if the radio is already in receive mode, the radio stays in receive mode without any change in state.  In contrast, `RADIO_RXON` expects the radio to be idle, and will issue an assertion failure if the radio is in any other state.
 
 ### `os_radio(RADIO_TX_AT)`
 
